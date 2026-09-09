@@ -316,7 +316,6 @@
             t.setAttribute('aria-selected', on ? 'true' : 'false');
         });
         inpaintSection.classList.toggle('hidden', next !== 'inpaint');
-        uploadLabel.textContent = next === 'inpaint' ? 'Referenzbilder' : 'Bilder';
         updateFormatUI();
         renderPreviews();
     }
