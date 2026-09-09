@@ -28,7 +28,7 @@
     var TIER_PX = { '2K': 2048, '4K': 4096 };
 
     var RATIOS = [
-        { value: 'auto', label: 'AUTO – vom Eingabebild übernehmen' },
+        { value: 'auto', label: 'AUTO' },
         { value: '1:3', w: 1, h: 3 },
         { value: '9:21', w: 9, h: 21 },
         { value: '1:2', w: 1, h: 2 },
@@ -125,6 +125,31 @@
             ctx.drawImage(img, (s - w) / 2, (s - h) / 2, w, h);
             return c.toDataURL('image/jpeg', 0.78);
         }).catch(function () { return src; });
+    }
+
+    // Ergebnis als Data-URL holen – erst per fetch, sonst über ein <img> auf
+    // Canvas. Ohne Pixel im Zugriff kann das Inpaint nicht zusammengesetzt werden.
+    function toDataUrl(url) {
+        return fetch(url).then(function (r) {
+            if (!r.ok) throw new Error('HTTP ' + r.status);
+            return r.blob();
+        }).then(blobToDataUrl).catch(function () {
+            return loadImage(url).then(function (img) {
+                var c = document.createElement('canvas');
+                c.width = img.naturalWidth || img.width;
+                c.height = img.naturalHeight || img.height;
+                c.getContext('2d').drawImage(img, 0, 0);
+                return c.toDataURL('image/png');
+            });
+        });
+    }
+
+    // Sehr grosse Originale nicht in voller Grösse in den Verlauf schreiben.
+    function boundedBase(src) {
+        if (approxBytes(src) <= 2 * 1024 * 1024) return Promise.resolve(src);
+        return shrink(src, MAX_INPUT_EDGE, 'image/jpeg', 0.95)
+            .then(function (o) { return o.dataUrl; })
+            .catch(function () { return src; });
     }
 
     function approxBytes(dataUrl) {
@@ -253,7 +278,6 @@
 
     var mode = 'edit';
     var inpaintSection = $('#inpaintSection');
-    var uploadTitle = $('#uploadTitle');
     var uploadLabel = $('#uploadLabel');
 
     // handoff === false: Modus wechseln, ohne Bilder zu verschieben (wenn der
@@ -279,8 +303,7 @@
             t.setAttribute('aria-selected', on ? 'true' : 'false');
         });
         inpaintSection.classList.toggle('hidden', next !== 'inpaint');
-        uploadTitle.textContent = next === 'inpaint' ? 'Zusätzliche Referenzbilder' : 'Bilder';
-        uploadLabel.textContent = next === 'inpaint' ? 'Referenzbilder hochladen' : 'Bilder hochladen';
+        uploadLabel.textContent = next === 'inpaint' ? 'Referenzbilder' : 'Bilder';
         updateFormatUI();
         renderPreviews();
     }
@@ -295,7 +318,6 @@
 
     var refs = [];
     var previewGrid = $('#previewGrid');
-    var imageCount = $('#imageCount');
 
     function renderPreviews() {
         previewGrid.innerHTML = '';
@@ -319,15 +341,6 @@
             box.appendChild(rm);
             previewGrid.appendChild(box);
         });
-
-        if (!refs.length) {
-            imageCount.textContent = mode === 'inpaint'
-                ? 'Optional: zusätzliche Referenzbilder für die Bearbeitung.'
-                : 'Noch keine Bilder gewählt – für eine Bearbeitung wird mindestens ein Bild benötigt.';
-        } else {
-            imageCount.textContent = refs.length + ' von ' + MAX_REFS + ' Bildern' +
-                (mode === 'edit' ? ' – das erste Bild ist das Basisbild.' : '.');
-        }
         updateFormatUI();
     }
 
@@ -337,11 +350,10 @@
         });
         if (!list.length) return;
 
-        var skipped = 0;
         var chain = Promise.resolve();
         list.forEach(function (file) {
             chain = chain.then(function () {
-                if (refs.length >= MAX_REFS) { skipped++; return; }
+                if (refs.length >= MAX_REFS) return;
                 return fileToDataUrl(file)
                     .then(function (raw) { return shrink(raw, MAX_INPUT_EDGE, 'image/jpeg', 0.92); })
                     .then(function (out) {
@@ -350,12 +362,6 @@
                     })
                     .catch(function (err) { console.warn('Upload fehlgeschlagen:', err); });
             });
-        });
-        chain.then(function () {
-            if (skipped) {
-                imageCount.textContent = refs.length + ' von ' + MAX_REFS + ' Bildern – ' +
-                    skipped + ' Bild(er) über dem Limit wurden ignoriert.';
-            }
         });
     }
 
@@ -568,24 +574,39 @@
         } catch (e) { return true; }
     }
 
-    // Maske für die API: fal erwartet für GPT Image eine deckende Maske, bei der
-    // weisse Pixel den bearbeitbaren Bereich markieren und schwarze Pixel bleiben.
-    function buildApiMask() {
-        var src = maskCtx().getImageData(0, 0, baseW, baseH);
+    // Das Original mit der markierten Fläche in kräftigem Rot. Zusammen mit dem
+    // unveränderten Original und dem Wrapper-Prompt ist das die Bildmaske für
+    // das Modell; die Kante entsteht anschliessend lokal beim Zusammensetzen.
+    function buildMarkedImage() {
         var out = document.createElement('canvas');
         out.width = baseW; out.height = baseH;
-        var octx = out.getContext('2d');
-        var img = octx.createImageData(baseW, baseH);
-        var s = src.data, d = img.data;
-        for (var i = 0; i < s.length; i += 4) {
-            var v = s[i + 3] > 8 ? 255 : 0;
-            d[i] = v;
-            d[i + 1] = v;
-            d[i + 2] = v;
-            d[i + 3] = 255;
+        var ctx = out.getContext('2d');
+        ctx.drawImage(baseCanvas, 0, 0);
+
+        var red = document.createElement('canvas');
+        red.width = baseW; red.height = baseH;
+        var rctx = red.getContext('2d');
+        rctx.fillStyle = 'rgb(255,28,60)';
+        rctx.fillRect(0, 0, baseW, baseH);
+        rctx.globalCompositeOperation = 'destination-in';
+        rctx.drawImage(maskCanvas, 0, 0);
+
+        ctx.drawImage(red, 0, 0);
+        return out.toDataURL('image/jpeg', 0.92);
+    }
+
+    function inpaintPrompt(userPrompt, refCount) {
+        var p = 'Two images are provided. Image 1 is the original photo. Image 2 is identical but has one ' +
+            'region highlighted in solid red — that red region is an edit mask. Reproduce image 1 exactly, ' +
+            'changing ONLY the masked region as follows: ' + userPrompt + '. Everything outside the masked ' +
+            'region must remain pixel-identical to image 1. Do not include any red highlight in the output. ' +
+            'Match lighting, grain, perspective and color of the surroundings so the edit blends seamlessly.';
+        if (refCount > 0) {
+            p += ' The ' + (refCount === 1 ? 'image' : refCount + ' images') + ' after the first two ' +
+                (refCount === 1 ? 'is an additional reference image' : 'are additional reference images') +
+                ' — use ' + (refCount === 1 ? 'it' : 'them') + ' as visual reference for the requested edit.';
         }
-        octx.putImageData(img, 0, 0);
-        return out.toDataURL('image/png');
+        return p;
     }
 
     // Weiche Kante für die lokale Nachbearbeitung.
@@ -645,7 +666,6 @@
 
     var ratioSelect = $('#ratioSelect');
     var tierSeg = $('#tierSeg');
-    var formatHint = $('#formatHint');
 
     var currentRatio = 'auto';
     var currentTier = '2K';
@@ -682,47 +702,15 @@
     }
 
     function updateFormatUI() {
-        var inpaint = mode === 'inpaint';
-
-        // Im Inpaint-Modus richtet sich die Ausgabe zwingend nach dem Basisbild,
-        // damit Maske und Ergebnis deckungsgleich bleiben.
-        $('#formatControls').classList.toggle('hidden', inpaint);
-        $('#inpaintInfo').textContent = baseUrl
-            ? 'Male den Bereich, der geändert werden soll, und beschreibe die Änderung im Prompt. ' +
-              'Ausgabe: ' + baseW + ' × ' + baseH + ' px (Format des Basisbildes).'
-            : 'Male den Bereich, der geändert werden soll, und beschreibe die Änderung im Prompt.';
-
-        var auto = currentRatio === 'auto';
-        tierSeg.classList.toggle('is-off', auto);
+        // Im Inpaint-Modus folgt die Ausgabe zwingend dem Basisbild, und das
+        // Zusammensetzen füllt transparente Stellen wieder – beides ohne Wahl.
+        $('#formatCard').classList.toggle('hidden', mode === 'inpaint');
+        tierSeg.classList.toggle('is-off', currentRatio === 'auto');
         $$('.seg-btn', tierSeg).forEach(function (b) {
             b.classList.toggle('is-active', b.dataset.tier === currentTier);
         });
-
-        if (inpaint) {
-            formatHint.textContent = baseUrl
-                ? 'Ausgabe: ' + baseW + ' × ' + baseH + ' px – Format und Auflösung folgen dem Basisbild.'
-                : 'Format und Auflösung folgen dem Basisbild.';
-        } else if (auto) {
-            formatHint.textContent = 'AUTO: Format und Auflösung werden vom Eingabebild übernommen. ' +
-                currentTier + ' greift, sobald ein festes Seitenverhältnis gewählt wird.';
-        } else {
-            var d = dimsFor(currentRatio, currentTier);
-            formatHint.textContent = currentRatio + ' · ' + d.width + ' × ' + d.height + ' px';
-        }
-
-        // Beim Zusammensetzen liegt das Original hinter dem Ergebnis – dann
-        // bleibt von einem transparenten Hintergrund nichts übrig.
-        var transparent = $('#bgTransparent').checked;
-        var clash = transparent && inpaint && $('#protectOutside').checked;
-        $('#bgHint').classList.toggle('hidden', !clash);
-        if (clash) {
-            $('#bgHint').textContent = 'Hinweis: Solange «Nur den markierten Bereich ersetzen» aktiv ist, ' +
-                'wird das Ergebnis über das Basisbild gelegt – transparente Stellen bleiben dabei gefüllt.';
-        }
     }
 
-    $('#bgTransparent').addEventListener('change', updateFormatUI);
-    $('#protectOutside').addEventListener('change', updateFormatUI);
 
     ratioSelect.addEventListener('change', function () {
         currentRatio = ratioSelect.value;
@@ -981,23 +969,25 @@
             prompt: promptText,
             ratio: currentRatio,
             tier: currentTier,
-            transparent: $('#bgTransparent').checked
+            transparent: mode === 'edit' && $('#bgTransparent').checked
         };
 
         if (mode === 'inpaint') {
             if (!baseUrl) throw new Error('Bitte zuerst ein Basisbild wählen.');
             if (maskIsEmpty()) throw new Error('Bitte den zu ändernden Bereich markieren.');
-            spec.images = [baseUrl].concat(refs.map(function (r) { return r.dataUrl; }));
-            spec.maskUrl = buildApiMask();
+            spec.images = [baseUrl, buildMarkedImage()].concat(refs.map(function (r) { return r.dataUrl; }));
+            spec.apiPrompt = inpaintPrompt(promptText, refs.length);
             spec.imageSize = 'auto';
             spec.formatLabel = baseW + ' × ' + baseH + ' px';
-            spec.composite = $('#protectOutside').checked;
+            spec.composite = true;
             spec.inpaint = {
-                base: baseUrl,
+                // Zusammengesetzt wird über die verlustfreie Quelle, nicht über
+                // das für die API komprimierte Basisbild.
+                base: baseSrc,
                 overlay: maskCanvas.toDataURL('image/png'),
                 w: baseW,
                 h: baseH,
-                feather: parseInt(featherRange.value, 10) || 0
+                feather: feather()
             };
         } else {
             if (!refs.length) throw new Error('Bitte mindestens ein Bild hochladen.');
@@ -1008,7 +998,6 @@
         }
 
         var bytes = spec.images.reduce(function (sum, u) { return sum + approxBytes(u); }, 0);
-        if (spec.maskUrl) bytes += approxBytes(spec.maskUrl);
         if (bytes > MAX_PAYLOAD_MB * 1024 * 1024) {
             throw new Error('Die gewählten Bilder sind zusammen zu gross (' +
                 (bytes / 1048576).toFixed(1) + ' MB). Bitte weniger oder kleinere Bilder verwenden.');
@@ -1028,14 +1017,13 @@
         });
 
         var payload = {
-            prompt: spec.prompt,
+            prompt: spec.apiPrompt || spec.prompt,
             image_urls: spec.images,
             image_size: spec.imageSize,
             quality: REQ_QUALITY,
             num_images: 1,
             output_format: REQ_FORMAT
         };
-        if (spec.maskUrl) payload.mask_url = spec.maskUrl;
         if (spec.transparent) payload.background = 'transparent';
 
         var handle = null;
@@ -1060,28 +1048,27 @@
             var images = (data && data.images) || [];
             if (!images.length || !images[0].url) throw new Error('Die API hat kein Bild zurückgegeben.');
             var remote = images[0].url;
-            return fetch(remote).then(function (r) {
-                if (!r.ok) throw new Error('HTTP ' + r.status);
-                return r.blob();
-            }).then(blobToDataUrl).then(function (dataUrl) {
+            if (remote.indexOf('data:') === 0) return { dataUrl: remote, remote: null };
+            return toDataUrl(remote).then(function (dataUrl) {
                 return { dataUrl: dataUrl, remote: remote };
-            }).catch(function () {
+            }).catch(function (e) {
+                console.warn('Ergebnis konnte nicht als Datei gelesen werden:', e);
                 return { dataUrl: null, remote: remote };
             });
         }).then(function (out) {
             if (state.cancelled) return;
             cancelBtn.remove();
             out.raw = out.dataUrl;
-            if (spec.mode === 'inpaint' && spec.composite && out.dataUrl) {
-                ui.setStatus('Wird zusammengesetzt …');
-                return compositeInpaint(out.dataUrl, spec.inpaint)
-                    .then(function (merged) { out.dataUrl = merged; return out; })
-                    .catch(function (e) {
-                        console.warn('Compositing fehlgeschlagen:', e);
-                        return out;
-                    });
-            }
-            return out;
+            if (spec.mode !== 'inpaint') return out;
+            // Ohne die Pixel des Ergebnisses lässt sich nichts zusammensetzen –
+            // dann lieber abbrechen als das Bild ausserhalb der Maske verändern.
+            if (!out.dataUrl) throw new Error('Das Ergebnis liess sich nicht laden und konnte deshalb nicht ' +
+                'mit dem Basisbild zusammengesetzt werden.');
+            ui.setStatus('Wird zusammengesetzt …');
+            return compositeInpaint(out.dataUrl, spec.inpaint).then(function (merged) {
+                out.dataUrl = merged;
+                return out;
+            });
         }).then(function (out) {
             if (!out || state.cancelled) return;
             var record = {
@@ -1092,18 +1079,21 @@
                 format: spec.formatLabel,
                 dataUrl: out.dataUrl || out.remote
             };
-            // Für nachträgliches Anpassen alles mitspeichern, was dafür nötig ist.
-            if (spec.mode === 'inpaint' && spec.composite && out.raw) {
-                record.tune = {
-                    base: spec.inpaint.base,
-                    overlay: spec.inpaint.overlay,
-                    raw: out.raw,
-                    w: spec.inpaint.w,
-                    h: spec.inpaint.h,
-                    feather: spec.inpaint.feather
-                };
-            }
             showResult(ui, spec, out, record.id);
+            // Für nachträgliches Anpassen alles mitspeichern, was dafür nötig ist.
+            if (spec.mode === 'inpaint' && out.raw) {
+                return boundedBase(spec.inpaint.base).then(function (base) {
+                    record.tune = {
+                        base: base,
+                        overlay: spec.inpaint.overlay,
+                        raw: out.raw,
+                        w: spec.inpaint.w,
+                        h: spec.inpaint.h,
+                        feather: spec.inpaint.feather
+                    };
+                    return addHistory(record);
+                });
+            }
             return addHistory(record);
         }).catch(function (err) {
             if (state.cancelled || err.message === '__cancelled__') {

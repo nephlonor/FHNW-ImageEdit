@@ -125,8 +125,6 @@ img { max-width: 100%; }
     min-width: 0;
 }
 
-.api-hint { margin-bottom: 0; }
-
 .api-stowed {
     display: none;
     align-items: center;
@@ -139,17 +137,6 @@ img { max-width: 100%; }
 .api-panel.stowed { padding: 10px 14px; }
 .api-panel.stowed .api-open { display: none; }
 .api-panel.stowed .api-stowed { display: flex; }
-
-.api-ok { color: var(--ok); }
-.api-ok::before {
-    content: "";
-    display: inline-block;
-    width: 7px; height: 7px;
-    border-radius: 50%;
-    background: var(--ok);
-    margin-right: 7px;
-    vertical-align: middle;
-}
 
 .api-mask {
     font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
@@ -192,11 +179,11 @@ input[type="range"] {
 
 .check {
     display: flex;
-    align-items: flex-start;
+    align-items: center;
     gap: 9px;
     font-size: 13px;
     color: var(--muted);
-    margin-top: 10px;
+    margin-top: 14px;
     cursor: pointer;
 }
 
@@ -296,37 +283,16 @@ input[type="range"] {
     background: #1d1a0c;
 }
 
-.card-title {
-    margin: 0 0 12px;
-    font-size: 12px;
-    font-weight: 700;
-    letter-spacing: .09em;
-    text-transform: uppercase;
-    color: var(--yellow);
-}
-
-.hint {
-    color: var(--muted);
-    font-size: 12.5px;
-    margin: 10px 0 0;
-}
-
 /* ---------- Format ---------- */
 
 .format-row {
     display: flex;
-    gap: 16px;
+    gap: 12px;
     flex-wrap: wrap;
-    align-items: flex-end;
+    align-items: center;
 }
 
-.field { flex: 1 1 220px; }
-.field > label {
-    display: block;
-    font-size: 12px;
-    color: var(--muted);
-    margin-bottom: 6px;
-}
+.format-row select { flex: 1 1 200px; width: auto; }
 
 .seg {
     display: inline-flex;
@@ -692,8 +658,6 @@ input[type="range"] {
     color: #666;
     font-size: 12px;
 }
-
-.dot-sep { margin: 0 6px; }
 
 @media (max-width: 560px) {
     .site-header h1 { font-size: 18px; padding-left: 12px; }
