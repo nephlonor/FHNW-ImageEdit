@@ -1355,6 +1355,60 @@
         });
     }
 
+    function copyText(text) {
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+            return navigator.clipboard.writeText(text).catch(legacyCopy);
+        }
+        return legacyCopy();
+
+        // Ohne Clipboard-API (oder wenn sie verweigert wird) über ein
+        // kurzlebiges Textfeld kopieren.
+        function legacyCopy() {
+            var ta = document.createElement('textarea');
+            ta.value = text;
+            ta.setAttribute('readonly', '');
+            ta.style.position = 'fixed';
+            ta.style.top = '0';
+            ta.style.opacity = '0';
+            document.body.appendChild(ta);
+            ta.select();
+            ta.setSelectionRange(0, ta.value.length);
+            var done = false;
+            try { done = document.execCommand('copy'); } catch (e) { done = false; }
+            document.body.removeChild(ta);
+            return done ? Promise.resolve() : Promise.reject(new Error('Kopieren nicht möglich.'));
+        }
+    }
+
+    // Prompt im Verlauf: antippen kopiert ihn.
+    function promptLine(text) {
+        var line = el('div', 'hist-prompt', text || '—');
+        if (!text) return line;
+        line.classList.add('is-copyable');
+        line.title = 'Prompt kopieren';
+        line.setAttribute('role', 'button');
+        line.setAttribute('tabindex', '0');
+
+        var timer = null;
+        function copy() {
+            copyText(text).then(function () {
+                clearTimeout(timer);
+                line.classList.add('is-copied');
+                line.textContent = 'kopiert';
+                timer = setTimeout(function () {
+                    line.classList.remove('is-copied');
+                    line.textContent = text;
+                }, 1200);
+            }).catch(function (err) { console.warn(err); });
+        }
+
+        line.addEventListener('click', copy);
+        line.addEventListener('keydown', function (e) {
+            if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); copy(); }
+        });
+        return line;
+    }
+
     function renderHistory() {
         return allHistory().then(function (items) {
             var grid = $('#historyGrid');
@@ -1371,7 +1425,7 @@
                 box.appendChild(img);
 
                 var meta = el('div', 'hist-meta');
-                meta.appendChild(el('div', 'hist-prompt', item.prompt || '—'));
+                meta.appendChild(promptLine(item.prompt));
                 meta.appendChild(el('div', null,
                     formatTime(item.ts) + ' · ' + modeLabel(item.mode)));
 
