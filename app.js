@@ -827,16 +827,32 @@
 
         jobsEl.insertBefore(card, jobsEl.firstChild);
 
+        // Ist der Job durch, wird aus der Statusanzeige der Schliessen-Knopf:
+        // das Ergebnis liegt im Verlauf, die Karte darf weg.
+        function makeDismissible() {
+            if (status.classList.contains('is-dismiss')) return;
+            status.classList.add('is-dismiss');
+            status.setAttribute('role', 'button');
+            status.setAttribute('tabindex', '0');
+            status.title = 'Schliessen';
+            status.addEventListener('click', function () { card.remove(); });
+            status.addEventListener('keydown', function (e) {
+                if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); card.remove(); }
+            });
+        }
+
         return {
             card: card,
             setStatus: function (t) { status.textContent = t; },
             stopBar: function () { bar.remove(); },
+            dismissible: makeDismissible,
             actions: actions,
             fail: function (msg) {
                 card.classList.add('is-error');
                 bar.remove();
                 status.textContent = 'Fehler';
                 card.insertBefore(el('p', 'job-error', msg), actions);
+                makeDismissible();
             }
         };
     }
@@ -869,6 +885,7 @@
     function showResult(ui, spec, result, historyId) {
         ui.stopBar();
         ui.setStatus(ui.statusText || 'Fertig');
+        ui.dismissible();
 
         var img = el('img', 'job-img');
         img.src = result.dataUrl || result.remote;
@@ -1013,6 +1030,7 @@
             state.cancelled = true;
             ui.stopBar();
             ui.setStatus('Abgebrochen');
+            ui.dismissible();
             cancelBtn.remove();
         });
 
@@ -1260,13 +1278,6 @@
                     formatTime(item.ts) + ' · ' + (item.mode === 'inpaint' ? 'Inpaint' : 'Edit')));
 
                 var acts = el('div', 'hist-actions');
-                var dl = el('button', null, 'Laden');
-                dl.type = 'button';
-                dl.addEventListener('click', function () {
-                    download(item.dataUrl, 'fhnw-imageeditor-' + item.ts + '.png');
-                });
-                acts.appendChild(dl);
-
                 var reuse = el('button', null, 'Als Quelle');
                 reuse.type = 'button';
                 reuse.addEventListener('click', function () { useAsSource(item.dataUrl); });

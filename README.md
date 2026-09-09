@@ -69,9 +69,14 @@ werden für die 12 neuesten Einträge aufbewahrt.
 ## Verlauf
 
 Ergebnisse landen mit Vorschaubild, Prompt und Zeitstempel in einem lokalen
-IndexedDB-Verlauf (max. 60 Einträge). Von dort lassen sie sich herunterladen,
-als neues Quellbild übernehmen, im Inpaint-Editor weiterbearbeiten oder – bei
-Inpaint-Ergebnissen – über *Maske anpassen* neu zusammensetzen.
+IndexedDB-Verlauf (max. 60 Einträge). Von dort lassen sie sich als neues
+Quellbild übernehmen, im Inpaint-Editor weiterbearbeiten oder – bei
+Inpaint-Ergebnissen – über *Maske anpassen* neu zusammensetzen. Zum Speichern
+das Vorschaubild antippen und im Grossbild per Rechtsklick bzw. langem Tippen
+sichern.
+
+Eine fertige Ergebniskarte lässt sich über **Fertig** oben rechts schliessen –
+das Bild bleibt im Verlauf.
 
 ## Technik
 
