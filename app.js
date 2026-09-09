@@ -14,7 +14,10 @@
     var QUEUE_URL = 'https://queue.fal.run/' + MODEL_ID;
     var TEXT_QUEUE_URL = 'https://queue.fal.run/' + TEXT_MODEL_ID;
 
-    var QUALITY_STEPS = ['low', 'medium', 'high', 'xhigh', 'max'];
+    // Die oberste Stufe der API ('max') bringt keinen sichtbaren Gewinn mehr und
+    // ist deshalb nicht dabei; 'xhigh' ist das Ende der Skala und heisst im UI
+    // schlicht „high“.
+    var QUALITY_STEPS = ['low', 'medium', 'high', 'xhigh'];
     var REQ_FORMAT = 'png';
 
     var KEY_STORAGE = 'fhnw.imageeditor.key';
@@ -815,7 +818,9 @@
 
     try {
         var storedQuality = parseInt(localStorage.getItem(QUALITY_STORAGE), 10);
-        if (storedQuality >= 0 && storedQuality < QUALITY_STEPS.length) currentQuality = storedQuality;
+        // Ein gespeicherter Wert oberhalb der Skala (früher gab es eine Stufe
+        // mehr) rutscht auf die höchste, statt auf low zurückzufallen.
+        if (storedQuality >= 0) currentQuality = Math.min(storedQuality, QUALITY_STEPS.length - 1);
     } catch (e) { /* egal */ }
 
     qualityRange.max = String(QUALITY_STEPS.length - 1);

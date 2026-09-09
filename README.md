@@ -82,10 +82,18 @@ Seitenverhältnis bis zu 3840 px lange Kante, ein Quadrat höchstens 2880 × 288
 
 ## Qualität
 
-Der Regler unter dem Format deckt die fünf Stufen des Modells ab: **low**,
-medium, high, xhigh, **max** – angeschrieben sind nur die beiden Enden, jede
-Stufe ist ein Punkt. Standard ist **low**; die Wahl bleibt im Browser gespeichert
-und gilt für Edit, Inpaint und Text-to-Image.
+Der Regler unter dem Format hat vier Stufen – angeschrieben sind nur die beiden
+Enden, jede Stufe ist ein Punkt. Standard ist die unterste; die Wahl bleibt im
+Browser gespeichert und gilt für Edit, Inpaint und Text-to-Image.
+
+| Punkt | 1 | 2 | 3 | 4 |
+|---|---|---|---|---|
+| Beschriftung | low | – | – | high |
+| an die API | `low` | `medium` | `high` | `xhigh` |
+
+Die API-Stufe `max` ist bewusst nicht dabei: sie bringt gegenüber `xhigh` keinen
+sichtbaren Gewinn mehr, kostet aber weiter. Deshalb heisst das obere Ende der
+Skala schlicht *high*, obwohl `xhigh` gesendet wird.
 
 Die Stufe geht als `quality` an die API und bestimmt Detailgrad, Dauer und
 Kosten – höhere Stufen verbrauchen deutlich mehr Bild-Tokens.
