@@ -95,6 +95,9 @@ das Bild bleibt im Verlauf.
 ## Technik
 
 * Statische Seite ohne Build-Schritt: `index.html`, `styles.css`, `app.js`.
+  `styles.css` und `app.js` werden mit einem `?v=`-Kürzel eingebunden, damit
+  nach einem Deploy niemand versehentlich noch die alte Fassung im Browser hat.
+  Das Kürzel wird bei einer Änderung an diesen Dateien hochgezählt.
 * Keine externen Abhängigkeiten, keine Analytics, kein Backend.
 * Der API-Key wird ausschliesslich im `localStorage` des Browsers abgelegt und
   nur an `queue.fal.run` gesendet. Jede Person nutzt ihr eigenes Kontingent.
