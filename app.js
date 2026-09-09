@@ -350,7 +350,7 @@
             box.appendChild(rm);
             previewGrid.appendChild(box);
         });
-        updateFormatUI();
+        syncRatioToFirstImage();
     }
 
     function addFiles(files) {
@@ -735,9 +735,8 @@
         return currentRatio === 'auto' ? TEXT_FALLBACK_RATIO : currentRatio;
     }
 
-    // Das erste Bild bestimmt, welches Seitenverhältnis im Menü als „closest
-    // match“ markiert wird. Bilder aus einem Ergebnis kennen ihre Masse noch
-    // nicht – die werden dann einmal nachgemessen.
+    // Das erste Bild bestimmt das Seitenverhältnis. Bilder aus einem Ergebnis
+    // kennen ihre Masse noch nicht – die werden dann einmal nachgemessen.
     function measureRef(item) {
         if (!item || item.w || item.measuring) return;
         item.measuring = true;
@@ -746,7 +745,7 @@
             item.w = probe.naturalWidth;
             item.h = probe.naturalHeight;
             item.measuring = false;
-            updateFormatUI();
+            syncRatioToFirstImage();
         };
         probe.onerror = function () { item.measuring = false; };
         probe.src = item.dataUrl;
@@ -754,8 +753,7 @@
 
     function closestRatio() {
         var first = refs[0];
-        if (mode !== 'edit' || !first) return null;
-        if (!first.w || !first.h) { measureRef(first); return null; }
+        if (!first || !first.w || !first.h) return null;
         var target = first.w / first.h;
         var best = null, bestDist = Infinity;
         RATIOS.forEach(function (r) {
@@ -764,6 +762,25 @@
             if (dist < bestDist) { bestDist = dist; best = r.value; }
         });
         return best;
+    }
+
+    // Neues erstes Bild → dessen Seitenverhältnis wird gesetzt, auch über AUTO
+    // hinweg. Damit steht die Auflösung fest, statt vom Modell zu kommen.
+    var matchedFirst = null;
+
+    function syncRatioToFirstImage() {
+        var first = refs[0];
+        if (mode !== 'edit' || !first) { matchedFirst = null; updateFormatUI(); return; }
+        if (!first.w || !first.h) { measureRef(first); updateFormatUI(); return; }
+        if (matchedFirst !== first.id) {
+            matchedFirst = first.id;
+            var match = closestRatio();
+            if (match && match !== currentRatio) {
+                currentRatio = match;
+                ratioSelect.value = match;
+            }
+        }
+        updateFormatUI();
     }
 
     function modeLabel(m) {
@@ -780,11 +797,6 @@
         // dann zählt auch die Grössenwahl wieder.
         tierSeg.classList.toggle('is-off', currentRatio === 'auto' && refs.length > 0);
 
-        var match = closestRatio();
-        $$('option', ratioSelect).forEach(function (o) {
-            var r = ratioEntry(o.value);
-            o.textContent = (r.label || r.value) + (o.value === match ? ' · closest match' : '');
-        });
         $$('.seg-btn', tierSeg).forEach(function (b) {
             b.classList.toggle('is-active', b.dataset.tier === currentTier);
         });
