@@ -256,7 +256,22 @@
     var uploadTitle = $('#uploadTitle');
     var uploadLabel = $('#uploadLabel');
 
-    function setMode(next) {
+    // handoff === false: Modus wechseln, ohne Bilder zu verschieben (wenn der
+    // Aufrufer das Basisbild selbst setzt, z. B. "In Inpaint öffnen").
+    function setMode(next, handoff) {
+        if (next !== mode && handoff !== false) {
+            if (next === 'inpaint') {
+                // Edit → Inpaint: das erste Bild wird zum Basisbild.
+                var first = refs.length ? refs.shift() : null;
+                if (first && first.dataUrl !== baseSrc) {
+                    loadBase(first.dataUrl).catch(function (err) { console.warn(err); });
+                }
+            } else if (baseSrc) {
+                // Inpaint → Edit: Basisbild wird zum ersten Referenzbild.
+                if (refs.length >= MAX_REFS) refs.pop();
+                refs.unshift({ id: uid(), dataUrl: baseSrc, name: 'Basisbild' });
+            }
+        }
         mode = next;
         $$('.tab').forEach(function (t) {
             var on = t.dataset.mode === next;
@@ -374,19 +389,41 @@
     /* ------------------------------------------------------------------ */
 
     var baseCanvas = $('#baseCanvas');
-    var maskCanvas = $('#maskCanvas');
+    var maskView = $('#maskView');                       // sichtbare, weich gezeichnete Vorschau
+    var maskCanvas = document.createElement('canvas');   // harte Maske, Quelle für alles Weitere
     var inpaintStage = $('#inpaintStage');
     var inpaintTools = $('#inpaintTools');
     var brushSize = $('#brushSize');
     var featherRange = $('#featherRange');
 
-    var baseUrl = null;
+    var PREVIEW_EDGE = 1400;
+
+    var baseUrl = null;      // Basisbild als JPEG-Data-URL (exakt baseW × baseH)
+    var baseSrc = null;      // Quelle, aus der das Basisbild geladen wurde
     var baseW = 0, baseH = 0;
     var brushMode = 'brush';
     var painting = false;
     var undoStack = [];
 
     function maskCtx() { return maskCanvas.getContext('2d', { willReadFrequently: true }); }
+
+    function feather() { return parseInt(featherRange.value, 10) || 0; }
+
+    // Vorschau in reduzierter Auflösung: der Weichzeichner skaliert mit der
+    // Kantenlänge, die angezeigte Weichheit entspricht daher dem Ergebnis.
+    var previewPending = false;
+    function scheduleMaskView() {
+        if (previewPending) return;
+        previewPending = true;
+        requestAnimationFrame(function () { previewPending = false; renderMaskView(); });
+    }
+
+    function renderMaskView() {
+        if (!baseW) return;
+        var ctx = maskView.getContext('2d');
+        ctx.clearRect(0, 0, maskView.width, maskView.height);
+        ctx.drawImage(featheredMask(maskCanvas, maskView.width, maskView.height, feather()), 0, 0);
+    }
 
     function loadBase(src) {
         return loadImage(src).then(function (img) {
@@ -395,15 +432,38 @@
             baseH = Math.max(1, Math.round(img.height * scale));
             baseCanvas.width = baseW; baseCanvas.height = baseH;
             maskCanvas.width = baseW; maskCanvas.height = baseH;
+
+            var p = Math.min(1, PREVIEW_EDGE / Math.max(baseW, baseH));
+            maskView.width = Math.max(1, Math.round(baseW * p));
+            maskView.height = Math.max(1, Math.round(baseH * p));
+
             var ctx = baseCanvas.getContext('2d');
             ctx.imageSmoothingQuality = 'high';
             ctx.drawImage(img, 0, 0, baseW, baseH);
             maskCtx().clearRect(0, 0, baseW, baseH);
             undoStack.length = 0;
             baseUrl = baseCanvas.toDataURL('image/jpeg', 0.94);
+            baseSrc = src;
             inpaintStage.classList.remove('hidden');
             inpaintTools.classList.remove('hidden');
+            renderMaskView();
             updateFormatUI();
+        });
+    }
+
+    // Eine gespeicherte Maske zurück in den Editor legen.
+    function restoreMask(overlayUrl, featherValue) {
+        return loadImage(overlayUrl).then(function (img) {
+            var ctx = maskCtx();
+            ctx.globalCompositeOperation = 'source-over';
+            ctx.clearRect(0, 0, maskCanvas.width, maskCanvas.height);
+            ctx.drawImage(img, 0, 0, maskCanvas.width, maskCanvas.height);
+            undoStack.length = 0;
+            if (typeof featherValue === 'number') {
+                featherRange.value = featherValue;
+                $('#featherOut').textContent = featherValue;
+            }
+            renderMaskView();
         });
     }
 
@@ -434,33 +494,37 @@
 
     $('#undoBtn').addEventListener('click', function () {
         var prev = undoStack.pop();
-        if (prev) maskCtx().putImageData(prev, 0, 0);
+        if (prev) { maskCtx().putImageData(prev, 0, 0); renderMaskView(); }
     });
 
     $('#clearMaskBtn').addEventListener('click', function () {
         pushUndo();
         maskCtx().clearRect(0, 0, maskCanvas.width, maskCanvas.height);
+        renderMaskView();
     });
 
     brushSize.addEventListener('input', function () { $('#brushSizeOut').textContent = brushSize.value; });
-    featherRange.addEventListener('input', function () { $('#featherOut').textContent = featherRange.value; });
+    featherRange.addEventListener('input', function () {
+        $('#featherOut').textContent = featherRange.value;
+        scheduleMaskView();
+    });
 
     function maskPos(e) {
-        var r = maskCanvas.getBoundingClientRect();
+        var r = maskView.getBoundingClientRect();
         return {
             x: (e.clientX - r.left) * (maskCanvas.width / r.width),
             y: (e.clientY - r.top) * (maskCanvas.height / r.height)
         };
     }
 
-    maskCanvas.addEventListener('pointerdown', function (e) {
+    maskView.addEventListener('pointerdown', function (e) {
         if (!baseUrl) return;
         e.preventDefault();
-        maskCanvas.setPointerCapture(e.pointerId);
+        maskView.setPointerCapture(e.pointerId);
         pushUndo();
         painting = true;
         var ctx = maskCtx();
-        var r = maskCanvas.getBoundingClientRect();
+        var r = maskView.getBoundingClientRect();
         var lw = parseInt(brushSize.value, 10) * (maskCanvas.width / r.width);
         ctx.lineCap = ctx.lineJoin = 'round';
         ctx.lineWidth = lw;
@@ -472,25 +536,28 @@
         ctx.fill();
         ctx.beginPath();
         ctx.moveTo(p.x, p.y);
+        scheduleMaskView();
     });
 
-    maskCanvas.addEventListener('pointermove', function (e) {
+    maskView.addEventListener('pointermove', function (e) {
         if (!painting) return;
         e.preventDefault();
         var p = maskPos(e);
         var ctx = maskCtx();
         ctx.lineTo(p.x, p.y);
         ctx.stroke();
+        scheduleMaskView();
     });
 
     function endPaint() {
         if (!painting) return;
         painting = false;
         maskCtx().globalCompositeOperation = 'source-over';
+        renderMaskView();
     }
 
-    maskCanvas.addEventListener('pointerup', endPaint);
-    maskCanvas.addEventListener('pointercancel', endPaint);
+    maskView.addEventListener('pointerup', endPaint);
+    maskView.addEventListener('pointercancel', endPaint);
     window.addEventListener('pointerup', endPaint);
 
     function maskIsEmpty() {
@@ -615,8 +682,11 @@
     }
 
     function updateFormatUI() {
-        // Im Inpaint-Modus richtet sich die Ausgabe zwingend nach dem Basisbild.
-        $('#formatCard').classList.toggle('hidden', mode === 'inpaint');
+        var inpaint = mode === 'inpaint';
+
+        // Im Inpaint-Modus richtet sich die Ausgabe zwingend nach dem Basisbild,
+        // damit Maske und Ergebnis deckungsgleich bleiben.
+        $('#formatControls').classList.toggle('hidden', inpaint);
         $('#inpaintInfo').textContent = baseUrl
             ? 'Male den Bereich, der geändert werden soll, und beschreibe die Änderung im Prompt. ' +
               'Ausgabe: ' + baseW + ' × ' + baseH + ' px (Format des Basisbildes).'
@@ -628,14 +698,31 @@
             b.classList.toggle('is-active', b.dataset.tier === currentTier);
         });
 
-        if (auto) {
+        if (inpaint) {
+            formatHint.textContent = baseUrl
+                ? 'Ausgabe: ' + baseW + ' × ' + baseH + ' px – Format und Auflösung folgen dem Basisbild.'
+                : 'Format und Auflösung folgen dem Basisbild.';
+        } else if (auto) {
             formatHint.textContent = 'AUTO: Format und Auflösung werden vom Eingabebild übernommen. ' +
                 currentTier + ' greift, sobald ein festes Seitenverhältnis gewählt wird.';
         } else {
             var d = dimsFor(currentRatio, currentTier);
             formatHint.textContent = currentRatio + ' · ' + d.width + ' × ' + d.height + ' px';
         }
+
+        // Beim Zusammensetzen liegt das Original hinter dem Ergebnis – dann
+        // bleibt von einem transparenten Hintergrund nichts übrig.
+        var transparent = $('#bgTransparent').checked;
+        var clash = transparent && inpaint && $('#protectOutside').checked;
+        $('#bgHint').classList.toggle('hidden', !clash);
+        if (clash) {
+            $('#bgHint').textContent = 'Hinweis: Solange «Nur den markierten Bereich ersetzen» aktiv ist, ' +
+                'wird das Ergebnis über das Basisbild gelegt – transparente Stellen bleiben dabei gefüllt.';
+        }
     }
+
+    $('#bgTransparent').addEventListener('change', updateFormatUI);
+    $('#protectOutside').addEventListener('change', updateFormatUI);
 
     ratioSelect.addEventListener('change', function () {
         currentRatio = ratioSelect.value;
@@ -774,12 +861,29 @@
         return b;
     }
 
-    function showResult(ui, spec, dataUrl, remoteUrl) {
+    function useAsSource(url) {
+        setMode('edit');
+        if (refs.length >= MAX_REFS) refs.pop();
+        refs.unshift({ id: uid(), dataUrl: url, name: 'Ergebnis' });
+        renderPreviews();
+        previewGrid.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }
+
+    function openInInpaint(url) {
+        setMode('inpaint', false);
+        return loadBase(url).then(function () {
+            inpaintStage.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        }).catch(function (err) { alert(err.message); });
+    }
+
+    // result: { dataUrl, remote, raw }  – raw ist die unveränderte Modellausgabe,
+    // sie wird für das nachträgliche Anpassen von Maske und Kante gebraucht.
+    function showResult(ui, spec, result, historyId) {
         ui.stopBar();
-        ui.setStatus('Fertig');
+        ui.setStatus(ui.statusText || 'Fertig');
 
         var img = el('img', 'job-img');
-        img.src = dataUrl || remoteUrl;
+        img.src = result.dataUrl || result.remote;
         img.alt = spec.prompt || 'Ergebnis';
         img.addEventListener('click', function () { openLightbox(img.src); });
         ui.card.insertBefore(img, ui.actions);
@@ -788,28 +892,86 @@
             download(img.src, 'fhnw-imageeditor-' + Date.now() + '.png');
         }, true);
 
-        addAction(ui.actions, 'Als Quellbild übernehmen', function () {
-            if (refs.length >= MAX_REFS) refs.pop();
-            refs.unshift({ id: uid(), dataUrl: img.src, name: 'Ergebnis' });
-            setMode('edit');
-            renderPreviews();
-            previewGrid.scrollIntoView({ behavior: 'smooth', block: 'center' });
-        });
+        addAction(ui.actions, 'Als Quellbild übernehmen', function () { useAsSource(img.src); });
+        addAction(ui.actions, 'In Inpaint öffnen', function () { openInInpaint(img.src); });
 
-        addAction(ui.actions, 'In Inpaint öffnen', function () {
-            setMode('inpaint');
-            loadBase(img.src).then(function () {
-                inpaintStage.scrollIntoView({ behavior: 'smooth', block: 'center' });
-            }).catch(function (err) { alert(err.message); });
-        });
-
-        if (remoteUrl) {
+        if (result.remote) {
             var a = el('a', 'btn btn-small btn-ghost', 'Original öffnen');
-            a.href = remoteUrl;
+            a.href = result.remote;
             a.target = '_blank';
             a.rel = 'noopener';
             ui.actions.appendChild(a);
         }
+
+        if (spec.mode === 'inpaint' && spec.composite && result.raw && spec.inpaint) {
+            addTuneRow(ui, spec, result, img, historyId);
+        }
+    }
+
+    // Nachträgliches Anpassen: Kante live nachregeln oder die Maske im Editor
+    // überarbeiten und das gespeicherte Rohergebnis neu zusammensetzen.
+    function addTuneRow(ui, spec, result, img, historyId) {
+        var row = el('div', 'job-tune');
+
+        row.appendChild(el('label', null, 'Kante'));
+        var slider = document.createElement('input');
+        slider.type = 'range';
+        slider.min = '0';
+        slider.max = '40';
+        slider.value = String(spec.inpaint.feather || 0);
+        row.appendChild(slider);
+        var out = el('output', null, slider.value);
+        row.appendChild(out);
+
+        var busy = false, queued = false;
+
+        function reblend() {
+            if (busy) { queued = true; return; }
+            busy = true;
+            compositeInpaint(result.raw, spec.inpaint).then(function (merged) {
+                img.src = merged;
+                result.dataUrl = merged;
+                if (historyId) updateHistoryRecord(historyId, merged, spec.inpaint);
+            }).catch(function (e) {
+                console.warn('Neu zusammensetzen fehlgeschlagen:', e);
+            }).then(function () {
+                busy = false;
+                if (queued) { queued = false; reblend(); }
+            });
+        }
+
+        slider.addEventListener('input', function () {
+            out.textContent = slider.value;
+            spec.inpaint.feather = parseInt(slider.value, 10) || 0;
+            reblend();
+        });
+
+        var tools = el('div', 'job-tune-btns');
+
+        addAction(tools, 'Maske im Editor öffnen', function () {
+            setMode('inpaint', false);
+            loadBase(spec.inpaint.base)
+                .then(function () { return restoreMask(spec.inpaint.overlay, spec.inpaint.feather || 0); })
+                .then(function () { inpaintStage.scrollIntoView({ behavior: 'smooth', block: 'center' }); })
+                .catch(function (e) { alert('Maske konnte nicht geladen werden: ' + e.message); });
+        });
+
+        addAction(tools, 'Aus Editor übernehmen', function () {
+            if (baseW !== spec.inpaint.w || baseH !== spec.inpaint.h) {
+                alert('Das Bild im Editor hat eine andere Grösse als dieses Ergebnis. ' +
+                    'Bitte zuerst "Maske im Editor öffnen".');
+                return;
+            }
+            if (maskIsEmpty()) { alert('Die Maske im Editor ist leer.'); return; }
+            spec.inpaint.overlay = maskCanvas.toDataURL('image/png');
+            spec.inpaint.feather = feather();
+            slider.value = String(spec.inpaint.feather);
+            out.textContent = slider.value;
+            reblend();
+        });
+
+        ui.card.appendChild(row);
+        ui.card.appendChild(tools);
     }
 
     // Zustand der Oberfläche einfrieren, damit parallele Jobs sich nicht stören.
@@ -818,7 +980,8 @@
             mode: mode,
             prompt: promptText,
             ratio: currentRatio,
-            tier: currentTier
+            tier: currentTier,
+            transparent: $('#bgTransparent').checked
         };
 
         if (mode === 'inpaint') {
@@ -873,6 +1036,7 @@
             output_format: REQ_FORMAT
         };
         if (spec.maskUrl) payload.mask_url = spec.maskUrl;
+        if (spec.transparent) payload.background = 'transparent';
 
         var handle = null;
 
@@ -907,10 +1071,11 @@
         }).then(function (out) {
             if (state.cancelled) return;
             cancelBtn.remove();
+            out.raw = out.dataUrl;
             if (spec.mode === 'inpaint' && spec.composite && out.dataUrl) {
                 ui.setStatus('Wird zusammengesetzt …');
                 return compositeInpaint(out.dataUrl, spec.inpaint)
-                    .then(function (merged) { return { dataUrl: merged, remote: out.remote }; })
+                    .then(function (merged) { out.dataUrl = merged; return out; })
                     .catch(function (e) {
                         console.warn('Compositing fehlgeschlagen:', e);
                         return out;
@@ -919,15 +1084,27 @@
             return out;
         }).then(function (out) {
             if (!out || state.cancelled) return;
-            showResult(ui, spec, out.dataUrl, out.remote);
-            return addHistory({
+            var record = {
                 id: uid(),
                 ts: Date.now(),
                 mode: spec.mode,
                 prompt: spec.prompt,
                 format: spec.formatLabel,
                 dataUrl: out.dataUrl || out.remote
-            });
+            };
+            // Für nachträgliches Anpassen alles mitspeichern, was dafür nötig ist.
+            if (spec.mode === 'inpaint' && spec.composite && out.raw) {
+                record.tune = {
+                    base: spec.inpaint.base,
+                    overlay: spec.inpaint.overlay,
+                    raw: out.raw,
+                    w: spec.inpaint.w,
+                    h: spec.inpaint.h,
+                    feather: spec.inpaint.feather
+                };
+            }
+            showResult(ui, spec, out, record.id);
+            return addHistory(record);
         }).catch(function (err) {
             if (state.cancelled || err.message === '__cancelled__') {
                 if (handle) falCancel(handle.cancel_url, key);
@@ -975,6 +1152,7 @@
     var DB_NAME = 'fhnw-imageeditor';
     var STORE = 'history';
     var HISTORY_MAX = 60;
+    var TUNE_KEEP = 12;   // so viele Einträge behalten die Daten fürs Nachjustieren
     var dbPromise = null;
 
     function openDb() {
@@ -1034,11 +1212,39 @@
         }).catch(function () { return []; });
     }
 
+    // Ein aktualisiertes Ergebnis (z. B. nach dem Neu-Zusammensetzen) zurückschreiben.
+    function updateHistoryRecord(id, dataUrl, inpaint) {
+        return tx('readonly').then(function (store) {
+            return new Promise(function (resolve) {
+                var r = store.get(id);
+                r.onsuccess = function () { resolve(r.result); };
+                r.onerror = function () { resolve(null); };
+            });
+        }).then(function (rec) {
+            if (!rec) return;
+            return thumbnail(dataUrl, 320).then(function (thumb) {
+                rec.dataUrl = dataUrl;
+                rec.thumb = thumb;
+                if (rec.tune && inpaint) {
+                    rec.tune.overlay = inpaint.overlay;
+                    rec.tune.feather = inpaint.feather;
+                }
+                return write(function (store) { store.put(rec); });
+            }).then(renderHistory);
+        }).catch(function (e) { console.warn('Verlauf-Update fehlgeschlagen:', e); });
+    }
+
     function prune() {
         return allHistory().then(function (items) {
-            if (items.length <= HISTORY_MAX) return;
+            var drop = items.slice(HISTORY_MAX);
+            // Die Daten fürs Nachjustieren sind gross – nur die neuesten behalten.
+            var strip = items.slice(0, HISTORY_MAX).filter(function (i, idx) {
+                return i.tune && idx >= TUNE_KEEP;
+            });
+            if (!drop.length && !strip.length) return;
             return write(function (store) {
-                items.slice(HISTORY_MAX).forEach(function (i) { store.delete(i.id); });
+                drop.forEach(function (i) { store.delete(i.id); });
+                strip.forEach(function (i) { delete i.tune; store.put(i); });
             });
         });
     }
@@ -1073,23 +1279,19 @@
 
                 var reuse = el('button', null, 'Als Quelle');
                 reuse.type = 'button';
-                reuse.addEventListener('click', function () {
-                    if (refs.length >= MAX_REFS) refs.pop();
-                    refs.unshift({ id: uid(), dataUrl: item.dataUrl, name: 'Verlauf' });
-                    setMode('edit');
-                    renderPreviews();
-                    previewGrid.scrollIntoView({ behavior: 'smooth', block: 'center' });
-                });
+                reuse.addEventListener('click', function () { useAsSource(item.dataUrl); });
                 acts.appendChild(reuse);
+
+                if (item.tune) {
+                    var tune = el('button', null, 'Maske anpassen');
+                    tune.type = 'button';
+                    tune.addEventListener('click', function () { reopenTune(item); });
+                    acts.appendChild(tune);
+                }
 
                 var inp = el('button', null, 'Inpaint');
                 inp.type = 'button';
-                inp.addEventListener('click', function () {
-                    setMode('inpaint');
-                    loadBase(item.dataUrl).then(function () {
-                        inpaintStage.scrollIntoView({ behavior: 'smooth', block: 'center' });
-                    }).catch(function (err) { alert(err.message); });
-                });
+                inp.addEventListener('click', function () { openInInpaint(item.dataUrl); });
                 acts.appendChild(inp);
 
                 var del = el('button', null, 'Löschen');
@@ -1106,6 +1308,37 @@
                 grid.appendChild(box);
             });
         });
+    }
+
+    // Einen Inpaint-Eintrag zum Nachbearbeiten zurückholen: Basisbild und Maske
+    // landen wieder im Editor, das Ergebnis bekommt eine Karte mit Kanten-Regler
+    // und "Aus Editor übernehmen".
+    function reopenTune(item) {
+        var spec = {
+            mode: 'inpaint',
+            prompt: item.prompt,
+            formatLabel: item.format || (item.tune.w + ' × ' + item.tune.h + ' px'),
+            composite: true,
+            inpaint: {
+                base: item.tune.base,
+                overlay: item.tune.overlay,
+                w: item.tune.w,
+                h: item.tune.h,
+                feather: item.tune.feather || 0
+            }
+        };
+        var ui = createJobCard(spec);
+        ui.statusText = 'Aus Verlauf';
+        showResult(ui, spec, { dataUrl: item.dataUrl, raw: item.tune.raw }, item.id);
+
+        setMode('inpaint', false);
+        loadBase(item.tune.base)
+            .then(function () { return restoreMask(item.tune.overlay, item.tune.feather || 0); })
+            .then(function () {
+                $('#historyCard').open = false;
+                inpaintStage.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            })
+            .catch(function (e) { alert('Editor-Zustand konnte nicht wiederhergestellt werden: ' + e.message); });
     }
 
     $('#historyClear').addEventListener('click', function () {
