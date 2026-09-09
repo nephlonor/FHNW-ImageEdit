@@ -10,7 +10,9 @@
     /* ------------------------------------------------------------------ */
 
     var MODEL_ID = 'openai/gpt-image-2.5/sunburst/edit';
+    var TEXT_MODEL_ID = 'openai/gpt-image-2.5/sunburst/text-to-image';
     var QUEUE_URL = 'https://queue.fal.run/' + MODEL_ID;
+    var TEXT_QUEUE_URL = 'https://queue.fal.run/' + TEXT_MODEL_ID;
 
     var REQ_QUALITY = 'low';
     var REQ_FORMAT = 'png';
@@ -26,6 +28,13 @@
     var JOB_TIMEOUT_MS = 15 * 60 * 1000;
 
     var TIER_PX = { '2K': 2048, '4K': 4096 };
+
+    // Ohne Eingabebild generiert Text-to-Image, das engere Grenzen hat als Edit:
+    // Kanten in 16er-Schritten, max. 3840 px, 0,65–8,3 Megapixel.
+    var TEXT_MAX_EDGE = 3840;
+    var TEXT_MAX_PX = 8294400;
+    var TEXT_MIN_PX = 655360;
+    var TEXT_FALLBACK_RATIO = '3:2';
 
     var RATIOS = [
         { value: 'auto', label: 'AUTO' },
@@ -690,22 +699,55 @@
         return RATIOS[0];
     }
 
-    function dimsFor(value, tier) {
+    function dimsFor(value, tier, textToImage) {
         var r = ratioEntry(value);
-        if (!r.w) return null;
+        if (!r.w) {
+            if (!textToImage) return null;
+            r = ratioEntry(TEXT_FALLBACK_RATIO);   // AUTO hat ohne Eingabebild nichts abzuleiten
+        }
         var long = TIER_PX[tier] || TIER_PX['2K'];
         var w, h;
-        if (r.w >= r.h) { w = long; h = Math.round(long * r.h / r.w); }
-        else { h = long; w = Math.round(long * r.w / r.h); }
-        var snap = function (v) { return Math.max(64, Math.min(14142, Math.round(v / 8) * 8)); };
-        return { width: snap(w), height: snap(h) };
+        if (r.w >= r.h) { w = long; h = long * r.h / r.w; }
+        else { h = long; w = long * r.w / r.h; }
+
+        if (!textToImage) {
+            var snap8 = function (v) { return Math.max(64, Math.min(14142, Math.round(v / 8) * 8)); };
+            return { width: snap8(w), height: snap8(h) };
+        }
+
+        var s = Math.min(1, TEXT_MAX_EDGE / Math.max(w, h), Math.sqrt(TEXT_MAX_PX / (w * h)));
+        w *= s; h *= s;
+        var up = Math.sqrt(TEXT_MIN_PX / (w * h));
+        if (up > 1) { w *= up; h *= up; }
+        var snap16 = function (v) { return Math.max(256, Math.round(v / 16) * 16); };
+        w = snap16(w); h = snap16(h);
+        // Das Runden auf 16er-Schritte kann eine Grenze knapp reissen – dann
+        // die längere Kante nachziehen, bis alles wieder passt.
+        var guard = 0;
+        while (guard++ < 300 && Math.min(w, h) > 256 &&
+               (Math.max(w, h) > TEXT_MAX_EDGE || w * h > TEXT_MAX_PX || Math.max(w / h, h / w) > 3)) {
+            if (w >= h) w -= 16; else h -= 16;
+        }
+        return { width: w, height: h };
+    }
+
+    function textRatio() {
+        return currentRatio === 'auto' ? TEXT_FALLBACK_RATIO : currentRatio;
+    }
+
+    function modeLabel(m) {
+        if (m === 'inpaint') return 'Inpaint';
+        if (m === 'text') return 'Text';
+        return 'Edit';
     }
 
     function updateFormatUI() {
         // Im Inpaint-Modus folgt die Ausgabe zwingend dem Basisbild, und das
         // Zusammensetzen füllt transparente Stellen wieder – beides ohne Wahl.
         $('#formatCard').classList.toggle('hidden', mode === 'inpaint');
-        tierSeg.classList.toggle('is-off', currentRatio === 'auto');
+        // AUTO leitet vom Eingabebild ab – ohne Bild greift statt dessen 3:2,
+        // dann zählt auch die Grössenwahl wieder.
+        tierSeg.classList.toggle('is-off', currentRatio === 'auto' && refs.length > 0);
         $$('.seg-btn', tierSeg).forEach(function (b) {
             b.classList.toggle('is-active', b.dataset.tier === currentTier);
         });
@@ -755,8 +797,8 @@
         });
     }
 
-    function falSubmit(payload, key) {
-        return fetch(QUEUE_URL, {
+    function falSubmit(payload, key, endpoint) {
+        return fetch(endpoint || QUEUE_URL, {
             method: 'POST',
             headers: { 'Authorization': 'Key ' + key, 'Content-Type': 'application/json' },
             body: JSON.stringify(payload)
@@ -809,7 +851,7 @@
     function createJobCard(spec) {
         var card = el('section', 'job');
         var head = el('div', 'job-head');
-        head.appendChild(el('span', 'job-badge', spec.mode === 'inpaint' ? 'Inpaint' : 'Edit'));
+        head.appendChild(el('span', 'job-badge', modeLabel(spec.mode)));
         head.appendChild(el('span', null, spec.formatLabel));
         head.appendChild(el('span', 'job-spacer'));
         var status = el('span', 'job-status', 'Wird gesendet …');
@@ -1006,8 +1048,15 @@
                 h: baseH,
                 feather: feather()
             };
+        } else if (!refs.length) {
+            // Kein Eingabebild – dann ist es eine reine Text-zu-Bild-Generierung.
+            spec.mode = 'text';
+            spec.images = [];
+            spec.endpoint = TEXT_QUEUE_URL;
+            var td = dimsFor(currentRatio, currentTier, true);
+            spec.imageSize = td;
+            spec.formatLabel = textRatio() + ' · ' + td.width + ' × ' + td.height;
         } else {
-            if (!refs.length) throw new Error('Bitte mindestens ein Bild hochladen.');
             spec.images = refs.map(function (r) { return r.dataUrl; });
             var d = dimsFor(currentRatio, currentTier);
             spec.imageSize = d || 'auto';
@@ -1036,17 +1085,17 @@
 
         var payload = {
             prompt: spec.apiPrompt || spec.prompt,
-            image_urls: spec.images,
             image_size: spec.imageSize,
             quality: REQ_QUALITY,
             num_images: 1,
             output_format: REQ_FORMAT
         };
+        if (spec.mode !== 'text') payload.image_urls = spec.images;
         if (spec.transparent) payload.background = 'transparent';
 
         var handle = null;
 
-        falSubmit(payload, key).then(function (h) {
+        falSubmit(payload, key, spec.endpoint).then(function (h) {
             handle = h;
             if (state.cancelled) { falCancel(h.cancel_url, key); throw new Error('__cancelled__'); }
             ui.setStatus('In der Warteschlange …');
@@ -1275,7 +1324,7 @@
                 var meta = el('div', 'hist-meta');
                 meta.appendChild(el('div', 'hist-prompt', item.prompt || '—'));
                 meta.appendChild(el('div', null,
-                    formatTime(item.ts) + ' · ' + (item.mode === 'inpaint' ? 'Inpaint' : 'Edit')));
+                    formatTime(item.ts) + ' · ' + modeLabel(item.mode)));
 
                 var acts = el('div', 'hist-actions');
                 var reuse = el('button', null, 'Als Quelle');

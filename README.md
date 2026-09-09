@@ -14,6 +14,8 @@ Bildeditor für Studierende der FHNW – läuft vollständig im Browser und spri
 2. Modus wählen:
    * **Edit** – ein oder mehrere Bilder hochladen, Änderung im Prompt
      beschreiben. Das erste Bild ist das Basisbild, weitere dienen als Referenz.
+     Ohne hochgeladenes Bild wird aus dem Prompt allein ein neues Bild erzeugt
+     (Text-to-Image).
    * **Inpaint** – Basisbild laden, den zu ändernden Bereich mit dem Pinsel
      markieren, Änderung im Prompt beschreiben.
 3. **Generieren** – mehrere Generierungen laufen parallel, jede erscheint als
@@ -65,6 +67,13 @@ werden für die 12 neuesten Einträge aufbewahrt.
 * **Transparenter Hintergrund** sendet `background: "transparent"`.
 * Im Inpaint-Modus entfallen diese Optionen: die Ausgabe folgt dem Basisbild,
   und das Zusammensetzen legt das Original hinter das Ergebnis.
+
+Ohne Eingabebild geht die Anfrage an
+`openai/gpt-image-2.5/sunburst/text-to-image` statt an `…/edit`. Dort gibt es
+kein AUTO, weil nichts abzuleiten ist – es gilt dann **3:2**. Die Grenzen dieses
+Endpunkts sind enger (Kanten in 16er-Schritten, max. 3840 px, 0,65–8,3
+Megapixel), die gewählte Grösse wird darauf eingepasst: 4K bedeutet hier je nach
+Seitenverhältnis bis zu 3840 px lange Kante, ein Quadrat höchstens 2880 × 2880.
 
 ## Verlauf
 
