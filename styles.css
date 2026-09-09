@@ -453,6 +453,19 @@ input[type="range"] {
 
 .job-status { color: var(--text); }
 .job.is-error .job-status { color: var(--danger); }
+
+.job-status.is-dismiss {
+    cursor: pointer;
+    user-select: none;
+}
+.job-status.is-dismiss::after {
+    content: ' ×';
+    color: var(--muted);
+}
+.job-status.is-dismiss:hover,
+.job-status.is-dismiss:focus-visible,
+.job-status.is-dismiss:hover::after,
+.job-status.is-dismiss:focus-visible::after { color: var(--yellow); }
 .job-spacer { flex: 1; }
 
 .job-prompt {
