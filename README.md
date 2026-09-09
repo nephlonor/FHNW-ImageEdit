@@ -80,6 +80,16 @@ Endpunkts sind enger (Kanten in 16er-Schritten, max. 3840 px, 0,65–8,3
 Megapixel), die gewählte Grösse wird darauf eingepasst: 4K bedeutet hier je nach
 Seitenverhältnis bis zu 3840 px lange Kante, ein Quadrat höchstens 2880 × 2880.
 
+## Qualität
+
+Der Regler unter dem Format deckt die fünf Stufen des Modells ab: **low**,
+medium, high, xhigh, **max** – angeschrieben sind nur die beiden Enden, jede
+Stufe ist ein Punkt. Standard ist **low**; die Wahl bleibt im Browser gespeichert
+und gilt für Edit, Inpaint und Text-to-Image.
+
+Die Stufe geht als `quality` an die API und bestimmt Detailgrad, Dauer und
+Kosten – höhere Stufen verbrauchen deutlich mehr Bild-Tokens.
+
 ## Verlauf
 
 Ergebnisse landen mit Vorschaubild, Prompt und Zeitstempel in einem lokalen

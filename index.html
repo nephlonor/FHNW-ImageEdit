@@ -6,7 +6,7 @@
 <title>FHNW ImageEditor</title>
 <meta name="theme-color" content="#0c0c0c">
 <link rel="icon" href="assets/favicon.svg" type="image/svg+xml">
-<link rel="stylesheet" href="styles.css?v=20260909b">
+<link rel="stylesheet" href="styles.css?v=20260909c">
 </head>
 <body>
 
@@ -75,6 +75,18 @@
         </label>
     </section>
 
+    <section class="card" id="qualityCard">
+        <div class="quality-row">
+            <span class="quality-end">low</span>
+            <div class="quality-slider">
+                <span class="quality-line"></span>
+                <span class="quality-dots" id="qualityDots" aria-hidden="true"></span>
+                <input type="range" id="qualityRange" min="0" max="4" step="1" value="0" aria-label="Qualität">
+            </div>
+            <span class="quality-end">max</span>
+        </div>
+    </section>
+
     <section class="card">
         <textarea id="prompt" rows="4" placeholder="Prompt"></textarea>
         <button class="btn btn-primary btn-block btn-generate" id="genBtn" type="button">Generieren</button>
@@ -122,6 +134,6 @@
     <img id="lightboxImg" alt="">
 </div>
 
-<script src="app.js?v=20260909b"></script>
+<script src="app.js?v=20260909c"></script>
 </body>
 </html>
