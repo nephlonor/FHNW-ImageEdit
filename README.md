@@ -63,7 +63,9 @@ werden für die 12 neuesten Einträge aufbewahrt.
   (`image_size: "auto"`).
 * **Festes Seitenverhältnis** – von 1:3 bis 3:1 (1:3, 9:21, 1:2, 9:16, 2:3, 3:4,
   4:5, 1:1, 5:4, 4:3, 3:2, 16:9, 2:1, 21:9, 3:1). Die längere Kante beträgt je
-  nach Schalter **2K** (2048 px) oder **4K** (4096 px).
+  nach Schalter **2K** (2048 px) oder **4K** (4096 px). Der Eintrag, der dem
+  ersten hochgeladenen Bild am nächsten kommt, ist im Menü mit
+  *closest match* markiert.
 * **Transparenter Hintergrund** sendet `background: "transparent"`.
 * Im Inpaint-Modus entfallen diese Optionen: die Ausgabe folgt dem Basisbild,
   und das Zusammensetzen legt das Original hinter das Ergebnis.
