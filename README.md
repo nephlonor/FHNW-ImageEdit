@@ -19,8 +19,39 @@ Bildeditor für Studierende der FHNW – läuft vollständig im Browser und spri
      die API übergeben; standardmässig wird das Ergebnis anschliessend im
      Browser über die weiche Maskenkante mit dem Original zusammengesetzt,
      damit alles ausserhalb der Markierung pixelgenau erhalten bleibt.
+
+   Beim Wechsel **Edit → Inpaint** wird das erste Bild automatisch zum
+   Basisbild, beim Wechsel **Inpaint → Edit** wandert das Basisbild als erstes
+   Referenzbild zurück in die Liste. Hin und zurück bleibt die gemalte Maske
+   erhalten.
 3. **Generieren** – mehrere Generierungen laufen parallel, jede erscheint als
    eigene Karte mit Status, Abbruch-Möglichkeit und Aktionen.
+
+## Maske nachträglich anpassen
+
+Der Regler **Kante** zeigt die Weichheit direkt in der Vorschau über dem
+Basisbild – was man sieht, ist die Kante, mit der zusammengesetzt wird.
+
+Jedes fertige Inpaint-Ergebnis behält die Rohausgabe des Modells und lässt sich
+danach ohne neue Generierung (und damit ohne Kosten) weiter justieren:
+
+* **Kante** auf der Ergebniskarte – setzt live mit einer anderen Kantenweichheit
+  neu zusammen.
+* **Maske im Editor öffnen** – legt Basisbild, Maske und Kantenwert zurück in
+  den Editor.
+* **Aus Editor übernehmen** – nimmt die dort überarbeitete Maske und setzt das
+  gespeicherte Ergebnis damit neu zusammen.
+
+Aus dem Verlauf führt **Maske anpassen** denselben Weg: Basisbild und Maske
+landen wieder im Editor und das Ergebnis bekommt eine eigene Karte. Die dafür
+nötigen Daten werden für die 12 neuesten Einträge aufbewahrt.
+
+## Transparenter Hintergrund
+
+Die Checkbox **Transparenter Hintergrund** sendet `background: "transparent"`
+(Ausgabeformat ist ohnehin PNG). Im Inpaint-Modus ist sie nur wirksam, wenn
+*Nur den markierten Bereich ersetzen* deaktiviert ist – sonst liegt das
+Basisbild hinter dem Ergebnis und füllt die transparenten Stellen wieder.
 
 ## Format
 
@@ -36,7 +67,8 @@ Bildeditor für Studierende der FHNW – läuft vollständig im Browser und spri
 
 Ergebnisse landen mit Vorschaubild, Prompt und Zeitstempel in einem lokalen
 IndexedDB-Verlauf (max. 60 Einträge). Von dort lassen sie sich herunterladen,
-als neues Quellbild übernehmen oder direkt im Inpaint-Editor weiterbearbeiten.
+als neues Quellbild übernehmen, direkt im Inpaint-Editor weiterbearbeiten oder
+– bei Inpaint-Ergebnissen – über *Maske anpassen* neu zusammensetzen.
 
 ## Technik
 
