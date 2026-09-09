@@ -83,7 +83,8 @@ Seitenverhältnis bis zu 3840 px lange Kante, ein Quadrat höchstens 2880 × 288
 ## Verlauf
 
 Ergebnisse landen mit Vorschaubild, Prompt und Zeitstempel in einem lokalen
-IndexedDB-Verlauf (max. 60 Einträge). Von dort lassen sie sich als neues
+IndexedDB-Verlauf (max. 60 Einträge). Ein Tippen auf den Prompt kopiert ihn in
+die Zwischenablage. Von dort lassen sie sich als neues
 Quellbild übernehmen, im Inpaint-Editor weiterbearbeiten oder – bei
 Inpaint-Ergebnissen – über *Maske anpassen* neu zusammensetzen. Zum Speichern
 das Vorschaubild antippen und im Grossbild per Rechtsklick bzw. langem Tippen

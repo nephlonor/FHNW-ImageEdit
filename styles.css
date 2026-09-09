@@ -621,6 +621,15 @@ input[type="range"] {
     margin-bottom: 5px;
 }
 
+.hist-prompt.is-copyable {
+    cursor: pointer;
+    -webkit-tap-highlight-color: transparent;
+}
+.hist-prompt.is-copyable:hover,
+.hist-prompt.is-copyable:focus-visible { color: var(--yellow); }
+
+.hist-prompt.is-copied { color: var(--yellow); }
+
 .hist-actions {
     display: flex;
     gap: 6px;
