@@ -14,12 +14,13 @@
     var QUEUE_URL = 'https://queue.fal.run/' + MODEL_ID;
     var TEXT_QUEUE_URL = 'https://queue.fal.run/' + TEXT_MODEL_ID;
 
-    var REQ_QUALITY = 'low';
+    var QUALITY_STEPS = ['low', 'medium', 'high', 'xhigh', 'max'];
     var REQ_FORMAT = 'png';
 
     var KEY_STORAGE = 'fhnw.imageeditor.key';
     var RATIO_STORAGE = 'fhnw.imageeditor.ratio';
     var TIER_STORAGE = 'fhnw.imageeditor.tier';
+    var QUALITY_STORAGE = 'fhnw.imageeditor.quality';
 
     var MAX_INPUT_EDGE = 2048;   // Kantenlänge, mit der Bilder hochgeladen werden
     var MAX_REFS = 8;            // Quell-/Referenzbilder pro Generierung
@@ -803,6 +804,45 @@
     }
 
 
+    /* ------------------------------------------------------------------ */
+    /* Qualität                                                            */
+    /* ------------------------------------------------------------------ */
+
+    var qualityRange = $('#qualityRange');
+    var qualityDots = $('#qualityDots');
+    var THUMB_PX = 16;                     // muss zur Breite in styles.css passen
+    var currentQuality = 0;
+
+    try {
+        var storedQuality = parseInt(localStorage.getItem(QUALITY_STORAGE), 10);
+        if (storedQuality >= 0 && storedQuality < QUALITY_STEPS.length) currentQuality = storedQuality;
+    } catch (e) { /* egal */ }
+
+    qualityRange.max = String(QUALITY_STEPS.length - 1);
+    qualityRange.value = String(currentQuality);
+
+    // Ein Punkt pro Stufe, genau unter der jeweiligen Position des Reglers.
+    QUALITY_STEPS.forEach(function (name, i) {
+        var dot = document.createElement('i');
+        var p = i / (QUALITY_STEPS.length - 1);
+        dot.style.left = 'calc(' + (p * 100) + '% + ' + ((0.5 - p) * THUMB_PX).toFixed(2) + 'px)';
+        dot.title = name;
+        qualityDots.appendChild(dot);
+    });
+
+    function updateQualityDots() {
+        $$('i', qualityDots).forEach(function (dot, i) {
+            dot.classList.toggle('is-on', i <= currentQuality);
+        });
+    }
+    updateQualityDots();
+
+    qualityRange.addEventListener('input', function () {
+        currentQuality = parseInt(qualityRange.value, 10) || 0;
+        try { localStorage.setItem(QUALITY_STORAGE, String(currentQuality)); } catch (e) { /* egal */ }
+        updateQualityDots();
+    });
+
     ratioSelect.addEventListener('change', function () {
         currentRatio = ratioSelect.value;
         try { localStorage.setItem(RATIO_STORAGE, currentRatio); } catch (e) {}
@@ -1077,6 +1117,7 @@
             prompt: promptText,
             ratio: currentRatio,
             tier: currentTier,
+            quality: QUALITY_STEPS[currentQuality] || QUALITY_STEPS[0],
             transparent: mode === 'edit' && $('#bgTransparent').checked
         };
 
@@ -1135,7 +1176,7 @@
         var payload = {
             prompt: spec.apiPrompt || spec.prompt,
             image_size: spec.imageSize,
-            quality: REQ_QUALITY,
+            quality: spec.quality || QUALITY_STEPS[0],
             num_images: 1,
             output_format: REQ_FORMAT
         };
