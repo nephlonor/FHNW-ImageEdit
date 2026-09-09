@@ -1,0 +1,161 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>FHNW ImageEditor</title>
+<meta name="description" content="Bildeditor der FHNW auf Basis von GPT Image 2.5 (Sunburst) über die fal.ai API.">
+<meta name="theme-color" content="#0c0c0c">
+<link rel="icon" href="assets/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+<header class="site-header">
+    <div class="wrap header-inner">
+        <img class="fhnw-logo" src="assets/fhnw-logo.svg" alt="Fachhochschule Nordwestschweiz FHNW" width="217" height="50">
+        <h1>FHNW ImageEditor</h1>
+    </div>
+</header>
+
+<!-- Der API-Block startet hier oben und rutscht nach dem Bestätigen nach unten. -->
+<div class="wrap api-slot" id="apiSlotTop"></div>
+
+<main class="wrap">
+
+    <!-- Modi -->
+    <nav class="tabs" role="tablist" aria-label="Modus">
+        <button class="tab is-active" id="tabEdit" role="tab" aria-selected="true" data-mode="edit">Edit</button>
+        <button class="tab" id="tabInpaint" role="tab" aria-selected="false" data-mode="inpaint">Inpaint</button>
+    </nav>
+
+    <!-- Inpaint: Basisbild + Maske -->
+    <section class="card hidden" id="inpaintSection">
+        <h2 class="card-title">Basisbild &amp; Maske</h2>
+        <label class="btn btn-primary btn-block" for="inpaintUpload">Basisbild wählen</label>
+        <input type="file" id="inpaintUpload" accept="image/*" hidden>
+
+        <div class="inpaint-stage hidden" id="inpaintStage">
+            <canvas id="baseCanvas"></canvas>
+            <canvas id="maskCanvas"></canvas>
+        </div>
+
+        <div class="inpaint-tools hidden" id="inpaintTools">
+            <div class="btn-row">
+                <button class="btn btn-ghost is-active" id="brushBtn" type="button">Pinsel</button>
+                <button class="btn btn-ghost" id="eraseBtn" type="button">Radierer</button>
+                <button class="btn btn-ghost" id="undoBtn" type="button">Rückgängig</button>
+                <button class="btn btn-ghost" id="clearMaskBtn" type="button">Leeren</button>
+            </div>
+            <div class="slider-row">
+                <label for="brushSize">Pinsel</label>
+                <input type="range" id="brushSize" min="6" max="160" value="48">
+                <output id="brushSizeOut">48</output>
+            </div>
+            <div class="slider-row">
+                <label for="featherRange">Kante</label>
+                <input type="range" id="featherRange" min="0" max="40" value="10">
+                <output id="featherOut">10</output>
+            </div>
+            <label class="check">
+                <input type="checkbox" id="protectOutside" checked>
+                <span>Nur den markierten Bereich ersetzen (Rest bleibt pixelgenau erhalten)</span>
+            </label>
+            <p class="hint" id="inpaintInfo">Male den Bereich, der geändert werden soll, und beschreibe die Änderung im Prompt.</p>
+        </div>
+    </section>
+
+    <!-- Referenz-/Quellbilder -->
+    <section class="card">
+        <h2 class="card-title" id="uploadTitle">Bilder</h2>
+        <label class="btn btn-primary btn-block" for="imageUpload" id="uploadLabel">Bilder hochladen</label>
+        <input type="file" id="imageUpload" accept="image/*" multiple hidden>
+        <p class="hint" id="imageCount">Noch keine Bilder gewählt.</p>
+        <div class="preview-grid" id="previewGrid"></div>
+    </section>
+
+    <!-- Format -->
+    <section class="card" id="formatCard">
+        <h2 class="card-title">Format</h2>
+        <div class="format-row">
+            <div class="field">
+                <label for="ratioSelect">Auflösung / Seitenverhältnis</label>
+                <select id="ratioSelect"></select>
+            </div>
+            <div class="field">
+                <label id="tierLabel">Grösse</label>
+                <div class="seg" id="tierSeg" role="group" aria-labelledby="tierLabel">
+                    <button class="seg-btn is-active" type="button" data-tier="2K">2K</button>
+                    <button class="seg-btn" type="button" data-tier="4K">4K</button>
+                </div>
+            </div>
+        </div>
+        <p class="hint" id="formatHint"></p>
+    </section>
+
+    <!-- Prompt + Start -->
+    <section class="card">
+        <h2 class="card-title">Prompt</h2>
+        <textarea id="prompt" rows="4" placeholder="Beschreibe die gewünschte Änderung …"></textarea>
+        <button class="btn btn-primary btn-block btn-generate" id="genBtn" type="button">Generieren</button>
+        <p class="hint">Mehrere Generierungen laufen parallel – du kannst direkt die nächste starten. <kbd>Ctrl</kbd>+<kbd>Enter</kbd></p>
+    </section>
+
+    <!-- Ergebnisse -->
+    <section id="jobs" class="jobs" aria-live="polite"></section>
+
+    <!-- Verlauf -->
+    <details class="card history" id="historyCard">
+        <summary>
+            <span>Verlauf</span>
+            <span class="history-count" id="historyCount"></span>
+        </summary>
+        <div class="history-body">
+            <div class="history-grid" id="historyGrid"></div>
+            <button class="btn btn-ghost btn-small" id="historyClear" type="button">Verlauf löschen</button>
+        </div>
+    </details>
+
+</main>
+
+<!-- Zielort des API-Blocks nach dem Bestätigen. -->
+<div class="wrap api-slot" id="apiSlotBottom"></div>
+
+<footer class="site-footer">
+    <div class="wrap">
+        <span>FHNW ImageEditor</span>
+        <span class="dot-sep">·</span>
+        <span>GPT Image 2.5 (Sunburst) über fal.ai</span>
+    </div>
+</footer>
+
+<!-- Der API-Block selbst (wird per JS in einen der beiden Slots gehängt). -->
+<template id="apiPanelTemplate">
+    <section class="api-panel" id="apiPanel">
+        <div class="api-open">
+            <div class="api-row">
+                <label for="apiKey" class="api-label">API:</label>
+                <input type="password" id="apiKey" placeholder="Eigener fal.ai API-Key" autocomplete="off" autocapitalize="off" spellcheck="false">
+                <button class="btn btn-primary" id="apiSave" type="button">Bestätigen</button>
+            </div>
+            <p class="hint api-hint">
+                Der Key wird nur lokal in diesem Browser gespeichert und direkt an fal.ai gesendet.
+                Key erstellen: <a href="https://fal.ai/dashboard/keys" target="_blank" rel="noopener">fal.ai/dashboard/keys</a>
+            </p>
+        </div>
+        <div class="api-stowed">
+            <span class="api-ok">API-Key aktiv</span>
+            <span class="api-mask" id="apiMask"></span>
+            <button class="btn btn-ghost btn-small" id="apiEdit" type="button">ändern</button>
+            <button class="btn btn-ghost btn-small" id="apiClear" type="button">löschen</button>
+        </div>
+    </section>
+</template>
+
+<div class="lightbox" id="lightbox" hidden>
+    <img id="lightboxImg" alt="">
+</div>
+
+<script src="app.js"></script>
+</body>
+</html>
