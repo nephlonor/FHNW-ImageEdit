@@ -18,6 +18,7 @@
     // ist deshalb nicht dabei; 'xhigh' ist das Ende der Skala und heisst im UI
     // schlicht „high“.
     var QUALITY_STEPS = ['low', 'medium', 'high', 'xhigh'];
+    var QUALITY_LABELS = ['low', 'medium', 'high', 'high+'];
     var REQ_FORMAT = 'png';
 
     var KEY_STORAGE = 'fhnw.imageeditor.key';
@@ -786,6 +787,13 @@
         updateFormatUI();
     }
 
+    // 'xhigh' heisst im UI „high+“, damit es sich von der Stufe darunter
+    // unterscheidet und trotzdem nicht als API-Name dasteht.
+    function qualityLabel(value) {
+        var i = QUALITY_STEPS.indexOf(value);
+        return i < 0 ? '' : QUALITY_LABELS[i];
+    }
+
     function modeLabel(m) {
         if (m === 'inpaint') return 'Inpaint';
         if (m === 'text') return 'Text';
@@ -946,6 +954,7 @@
         var head = el('div', 'job-head');
         head.appendChild(el('span', 'job-badge', modeLabel(spec.mode)));
         head.appendChild(el('span', null, spec.formatLabel));
+        if (qualityLabel(spec.quality)) head.appendChild(el('span', 'job-quality', qualityLabel(spec.quality)));
         head.appendChild(el('span', 'job-spacer'));
         var status = el('span', 'job-status', 'Wird gesendet …');
         head.appendChild(status);
@@ -1034,14 +1043,6 @@
 
         addAction(ui.actions, 'Als Quellbild übernehmen', function () { useAsSource(img.src); });
         addAction(ui.actions, 'In Inpaint öffnen', function () { openInInpaint(img.src); });
-
-        if (result.remote) {
-            var a = el('a', 'btn btn-small btn-ghost', 'Original öffnen');
-            a.href = result.remote;
-            a.target = '_blank';
-            a.rel = 'noopener';
-            ui.actions.appendChild(a);
-        }
 
         if (spec.mode === 'inpaint' && spec.composite && result.raw && spec.inpaint) {
             addTuneRow(ui, spec, result, img, historyId);
@@ -1238,6 +1239,7 @@
                 mode: spec.mode,
                 prompt: spec.prompt,
                 format: spec.formatLabel,
+                quality: spec.quality,
                 dataUrl: out.dataUrl || out.remote
             };
             showResult(ui, spec, out, record.id);
@@ -1471,8 +1473,10 @@
 
                 var meta = el('div', 'hist-meta');
                 meta.appendChild(promptLine(item.prompt));
-                meta.appendChild(el('div', null,
-                    formatTime(item.ts) + ' · ' + modeLabel(item.mode)));
+                var line = formatTime(item.ts) + ' · ' + modeLabel(item.mode);
+                // Ältere Einträge kennen die Stufe noch nicht.
+                if (qualityLabel(item.quality)) line += ' · ' + qualityLabel(item.quality);
+                meta.appendChild(el('div', null, line));
 
                 var acts = el('div', 'hist-actions');
                 var reuse = el('button', null, 'Als Quelle');
@@ -1516,6 +1520,7 @@
             mode: 'inpaint',
             prompt: item.prompt,
             formatLabel: item.format || (item.tune.w + ' × ' + item.tune.h + ' px'),
+            quality: item.quality,
             composite: true,
             inpaint: {
                 base: item.tune.base,
