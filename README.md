@@ -88,15 +88,19 @@ Browser gespeichert und gilt für Edit, Inpaint und Text-to-Image.
 
 | Punkt | 1 | 2 | 3 | 4 |
 |---|---|---|---|---|
-| Beschriftung | low | – | – | high |
+| am Regler | low | – | – | high |
+| auf Job-Karte und im Verlauf | low | medium | high | high+ |
 | an die API | `low` | `medium` | `high` | `xhigh` |
 
 Die API-Stufe `max` ist bewusst nicht dabei: sie bringt gegenüber `xhigh` keinen
 sichtbaren Gewinn mehr, kostet aber weiter. Deshalb heisst das obere Ende der
-Skala schlicht *high*, obwohl `xhigh` gesendet wird.
+Skala schlicht *high*, obwohl `xhigh` gesendet wird – als Marke auf der Karte
+steht dort *high+*, damit es sich von der Stufe darunter unterscheidet.
 
 Die Stufe geht als `quality` an die API und bestimmt Detailgrad, Dauer und
-Kosten – höhere Stufen verbrauchen deutlich mehr Bild-Tokens.
+Kosten – höhere Stufen verbrauchen deutlich mehr Bild-Tokens. Jede Generierung
+trägt die verwendete Stufe ab Start in der Kopfzeile der Job-Karte und später
+im Verlaufseintrag.
 
 ## Verlauf
 

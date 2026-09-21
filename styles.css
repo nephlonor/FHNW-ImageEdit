@@ -558,6 +558,15 @@ input[type="range"] {
 .job-status.is-dismiss:focus-visible,
 .job-status.is-dismiss:hover::after,
 .job-status.is-dismiss:focus-visible::after { color: var(--yellow); }
+.job-quality {
+    border: 1px solid var(--line);
+    border-radius: 4px;
+    padding: 1px 6px;
+    font-size: 10.5px;
+    letter-spacing: .04em;
+    color: var(--muted);
+}
+
 .job-spacer { flex: 1; }
 
 .job-prompt {
