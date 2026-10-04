@@ -37,7 +37,11 @@ Wie im Referenz-Projekt [NanoBanana](https://nephlonor.github.io/NanoBanana/):
    Maskenkante mit dem Original zusammengesetzt. Ausserhalb der Markierung ist
    das Ergebnis damit pixelgenau das Original – unabhängig davon, was das Modell
    zurückgibt. Zusammengesetzt wird über die verlustfreie Bildquelle, nicht über
-   die für die API komprimierte Fassung.
+   die für die API komprimierte Fassung – allerdings in Arbeitsgrösse
+   (max. 2048 px Kante), nicht aus dem Originalbild der Kamera: das noch einmal
+   zu dekodieren kostete auf Mobilgeräten ein Vielfaches an Speicher, ohne am
+   Ergebnis etwas zu ändern. Die Zeichenflächen werden direkt nach dem
+   Zusammensetzen freigegeben.
 
 Der Regler **Kante** zeigt die Weichheit direkt in der Vorschau über dem
 Basisbild – was man sieht, ist die Kante, mit der zusammengesetzt wird.
