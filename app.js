@@ -122,7 +122,9 @@
             var ctx = c.getContext('2d');
             ctx.imageSmoothingQuality = 'high';
             ctx.drawImage(img, 0, 0, w, h);
-            return { dataUrl: c.toDataURL(mime || 'image/jpeg', quality || 0.92), w: w, h: h };
+            var url = c.toDataURL(mime || 'image/jpeg', quality || 0.92);
+            releaseCanvas(c);
+            return { dataUrl: url, w: w, h: h };
         });
     }
 
@@ -137,7 +139,9 @@
             var scale = Math.max(s / img.width, s / img.height);
             var w = img.width * scale, h = img.height * scale;
             ctx.drawImage(img, (s - w) / 2, (s - h) / 2, w, h);
-            return c.toDataURL('image/jpeg', 0.78);
+            var url = c.toDataURL('image/jpeg', 0.78);
+            releaseCanvas(c);
+            return url;
         }).catch(function () { return src; });
     }
 
@@ -153,7 +157,9 @@
                 c.width = img.naturalWidth || img.width;
                 c.height = img.naturalHeight || img.height;
                 c.getContext('2d').drawImage(img, 0, 0);
-                return c.toDataURL('image/png');
+                var url = c.toDataURL('image/png');
+                releaseCanvas(c);
+                return url;
             });
         });
     }
@@ -462,7 +468,11 @@
             maskCtx().clearRect(0, 0, baseW, baseH);
             undoStack.length = 0;
             baseUrl = baseCanvas.toDataURL('image/jpeg', 0.94);
-            baseSrc = src;
+            // Verlustfreie Quelle fürs Zusammensetzen – aber in Arbeitsgrösse.
+            // Das Original einer Handykamera hat schnell 12 Megapixel; es beim
+            // Zusammensetzen noch einmal zu dekodieren hat auf Mobilgeräten den
+            // Tab gesprengt, und gezeichnet wird ohnehin in baseW × baseH.
+            baseSrc = scale < 1 ? baseCanvas.toDataURL('image/png') : src;
             inpaintStage.classList.remove('hidden');
             inpaintTools.classList.remove('hidden');
             renderMaskView();
@@ -605,7 +615,11 @@
         rctx.drawImage(maskCanvas, 0, 0);
 
         ctx.drawImage(red, 0, 0);
-        return out.toDataURL('image/jpeg', 0.92);
+        releaseCanvas(red);
+
+        var marked = out.toDataURL('image/jpeg', 0.92);
+        releaseCanvas(out);
+        return marked;
     }
 
     function inpaintPrompt(userPrompt, refCount) {
@@ -646,31 +660,67 @@
         small.getContext('2d').drawImage(maskImg, 0, 0, sw, sh);
         ctx.imageSmoothingQuality = 'high';
         ctx.drawImage(small, 0, 0, w, h);
+        releaseCanvas(small);
         return out;
+    }
+
+    // Gibt den Speicher der Zeichenfläche sofort frei, statt auf die
+    // Speicherbereinigung zu warten – auf Mobilgeräten ist das der Unterschied
+    // zwischen „läuft“ und „Tab weg“.
+    function releaseCanvas(canvas) {
+        if (!canvas) return;
+        canvas.width = 1;
+        canvas.height = 1;
+    }
+
+    function needImage(src, what) {
+        if (!src) return Promise.reject(new Error(what + ' fehlt.'));
+        return loadImage(src).catch(function () {
+            throw new Error(what + ' konnte nicht geladen werden.');
+        });
     }
 
     // Ergebnis = Modellbild im Maskenbereich, Original ausserhalb.
     function compositeInpaint(resultUrl, snap) {
-        return Promise.all([loadImage(resultUrl), loadImage(snap.base), loadImage(snap.overlay)])
-            .then(function (imgs) {
-                var res = imgs[0], base = imgs[1], overlay = imgs[2];
-                var w = snap.w, h = snap.h;
-                var soft = featheredMask(overlay, w, h, snap.feather);
+        return Promise.all([
+            needImage(resultUrl, 'Das Ergebnis'),
+            needImage(snap.base, 'Das Basisbild'),
+            needImage(snap.overlay, 'Die Maske')
+        ]).then(function (imgs) {
+            var res = imgs[0], base = imgs[1], overlay = imgs[2];
+            var w = snap.w, h = snap.h;
+            var soft = null, clipped = null, out = null;
+            try {
+                soft = featheredMask(overlay, w, h, snap.feather);
 
-                var clipped = document.createElement('canvas');
+                clipped = document.createElement('canvas');
                 clipped.width = w; clipped.height = h;
                 var cctx = clipped.getContext('2d');
                 cctx.drawImage(res, 0, 0, w, h);
                 cctx.globalCompositeOperation = 'destination-in';
                 cctx.drawImage(soft, 0, 0);
+                releaseCanvas(soft); soft = null;
 
-                var out = document.createElement('canvas');
+                out = document.createElement('canvas');
                 out.width = w; out.height = h;
                 var octx = out.getContext('2d');
                 octx.drawImage(base, 0, 0, w, h);
                 octx.drawImage(clipped, 0, 0);
-                return out.toDataURL('image/png');
-            });
+                releaseCanvas(clipped); clipped = null;
+
+                var url = out.toDataURL('image/png');
+                // Reicht der Zeichenspeicher nicht, liefern manche Browser
+                // „data:,“ zurück, statt einen Fehler zu werfen.
+                if (!url || url.length < 1024) {
+                    throw new Error('Das Bild ist zu gross für diesen Browser (' + w + ' × ' + h + ' px).');
+                }
+                return url;
+            } finally {
+                releaseCanvas(soft);
+                releaseCanvas(clipped);
+                releaseCanvas(out);
+            }
+        });
     }
 
     /* ------------------------------------------------------------------ */
@@ -1215,7 +1265,7 @@
                 return { dataUrl: dataUrl, remote: remote };
             }).catch(function (e) {
                 console.warn('Ergebnis konnte nicht als Datei gelesen werden:', e);
-                return { dataUrl: null, remote: remote };
+                return { dataUrl: null, remote: remote, loadError: e && e.message };
             });
         }).then(function (out) {
             if (state.cancelled) return;
@@ -1225,7 +1275,8 @@
             // Ohne die Pixel des Ergebnisses lässt sich nichts zusammensetzen –
             // dann lieber abbrechen als das Bild ausserhalb der Maske verändern.
             if (!out.dataUrl) throw new Error('Das Ergebnis liess sich nicht laden und konnte deshalb nicht ' +
-                'mit dem Basisbild zusammengesetzt werden.');
+                'mit dem Basisbild zusammengesetzt werden' +
+                (out.loadError ? ' (' + out.loadError + ')' : '') + '.');
             ui.setStatus('Wird zusammengesetzt …');
             return compositeInpaint(out.dataUrl, spec.inpaint).then(function (merged) {
                 out.dataUrl = merged;
