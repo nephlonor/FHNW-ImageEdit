@@ -119,6 +119,23 @@ sichern.
 Eine fertige Ergebniskarte lässt sich über **Fertig** oben rechts schliessen –
 das Bild bleibt im Verlauf.
 
+### Speicheraufteilung
+
+Der Verlauf liegt in drei Stores, damit die Liste nie die Bilder selbst lädt:
+
+| Store | Inhalt | gelesen |
+|---|---|---|
+| `entries` | Prompt, Zeit, Modus, Stufe, Vorschaubild (≈ 20–40 KB) | beim Zeichnen der Liste |
+| `images` | das Ergebnisbild | beim Antippen, *Als Quelle*, *Inpaint* |
+| `tunes` | Basisbild, Maske, Rohergebnis fürs Nachjustieren | bei *Maske anpassen* |
+
+Früher lag alles in einem Datensatz, und jedes Neuzeichnen der Liste hat den
+ganzen Verlauf samt aller Bilder in den Speicher geholt – nach jedem fertigen
+Job zweimal hintereinander. Bei einem gut gefüllten Verlauf waren das mehrere
+hundert MB; auf Mobilgeräten hat der Browser den Tab dabei neu geladen und alle
+laufenden Jobs verloren. Einträge aus der alten Form werden beim ersten Laden
+einzeln übernommen.
+
 ## Technik
 
 * Statische Seite ohne Build-Schritt: `index.html`, `styles.css`, `app.js`.

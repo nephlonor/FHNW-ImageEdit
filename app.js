@@ -142,7 +142,7 @@
             var url = c.toDataURL('image/jpeg', 0.78);
             releaseCanvas(c);
             return url;
-        }).catch(function () { return src; });
+        }).catch(function () { return null; });
     }
 
     // Ergebnis als Data-URL holen – erst per fetch, sonst über ein <img> auf
@@ -1353,89 +1353,142 @@
     /* Verlauf (IndexedDB)                                                 */
     /* ------------------------------------------------------------------ */
 
+    // Die Liste liest nur leichte Einträge (Metadaten + Vorschaubild). Das
+    // Ergebnisbild und die Daten fürs Nachjustieren liegen in eigenen Stores
+    // und werden erst geholt, wenn sie gebraucht werden – immer nur für einen
+    // Eintrag. Früher lag alles in einem Datensatz, und jedes Neuzeichnen der
+    // Liste hat den gesamten Verlauf samt aller Bilder in den Speicher geladen:
+    // nach jedem fertigen Job zweimal hintereinander, schnell mehrere hundert MB.
+
     var DB_NAME = 'fhnw-imageeditor';
-    var STORE = 'history';
+    var DB_VERSION = 2;
+    var LEGACY = 'history';   // Version 1: alles in einem Datensatz
+    var ENTRIES = 'entries';  // leicht: Metadaten + Vorschaubild
+    var IMAGES = 'images';    // schwer: das Ergebnisbild
+    var TUNES = 'tunes';      // schwer: Basisbild, Maske, Rohergebnis
     var HISTORY_MAX = 60;
-    var TUNE_KEEP = 12;   // so viele Einträge behalten die Daten fürs Nachjustieren
+    var TUNE_KEEP = 12;       // so viele Einträge behalten die Daten fürs Nachjustieren
+    var THUMB_MAX = 200 * 1024; // ein echtes Vorschaubild hat 20–40 KB
     var dbPromise = null;
 
     function openDb() {
         if (dbPromise) return dbPromise;
         dbPromise = new Promise(function (resolve, reject) {
             if (!window.indexedDB) { reject(new Error('IndexedDB nicht verfügbar')); return; }
-            var req = indexedDB.open(DB_NAME, 1);
+            var req = indexedDB.open(DB_NAME, DB_VERSION);
             req.onupgradeneeded = function () {
                 var db = req.result;
-                if (!db.objectStoreNames.contains(STORE)) {
-                    var store = db.createObjectStore(STORE, { keyPath: 'id' });
-                    store.createIndex('ts', 'ts');
-                }
+                [ENTRIES, IMAGES, TUNES].forEach(function (name) {
+                    if (!db.objectStoreNames.contains(name)) db.createObjectStore(name, { keyPath: 'id' });
+                });
             };
-            req.onsuccess = function () { resolve(req.result); };
+            req.onsuccess = function () {
+                var db = req.result;
+                // Eine spätere Version in einem anderen Tab nicht blockieren.
+                db.onversionchange = function () { db.close(); dbPromise = null; };
+                resolve(db);
+            };
             req.onerror = function () { reject(req.error); };
         }).catch(function (e) { dbPromise = null; throw e; });
         return dbPromise;
     }
 
-    function tx(mode) {
+    // Eine Transaktion über die genannten Stores; `fn` stellt Anfragen und legt
+    // ein Ergebnis in out.value ab. Aufgelöst wird erst, wenn alles geschrieben ist.
+    function run(names, mode, fn) {
         return openDb().then(function (db) {
-            return db.transaction(STORE, mode).objectStore(STORE);
-        });
-    }
-
-    // Führt Schreibzugriffe aus und wartet, bis die Transaktion abgeschlossen ist.
-    function write(fn) {
-        return tx('readwrite').then(function (store) {
             return new Promise(function (resolve, reject) {
-                fn(store);
-                store.transaction.oncomplete = function () { resolve(); };
-                store.transaction.onerror = function () { reject(store.transaction.error); };
-                store.transaction.onabort = function () { reject(store.transaction.error); };
+                var t = db.transaction(names, mode);
+                var out = { value: undefined };
+                fn(function (name) { return t.objectStore(name); }, out);
+                t.oncomplete = function () { resolve(out.value); };
+                t.onerror = function () { reject(t.error); };
+                t.onabort = function () { reject(t.error); };
             });
         });
     }
 
+    function entryOf(rec, thumb) {
+        return {
+            id: rec.id,
+            ts: rec.ts,
+            mode: rec.mode,
+            prompt: rec.prompt,
+            format: rec.format,
+            quality: rec.quality,
+            // Ältere Fassungen haben bei einem Fehler das volle Bild als
+            // Vorschau abgelegt – das gehört nicht in den leichten Store.
+            thumb: thumb && thumb.length <= THUMB_MAX ? thumb : null,
+            hasTune: !!rec.tune
+        };
+    }
+
     function addHistory(rec) {
         return thumbnail(rec.dataUrl, 320).then(function (thumb) {
-            rec.thumb = thumb;
-            return write(function (store) { store.put(rec); });
+            return run([ENTRIES, IMAGES, TUNES], 'readwrite', function (store) {
+                store(ENTRIES).put(entryOf(rec, thumb));
+                store(IMAGES).put({ id: rec.id, dataUrl: rec.dataUrl });
+                if (rec.tune) store(TUNES).put({ id: rec.id, tune: rec.tune });
+            });
         }).then(prune).then(renderHistory).catch(function (e) {
             console.warn('Verlauf konnte nicht gespeichert werden:', e);
         });
     }
 
     function allHistory() {
-        return tx('readonly').then(function (store) {
-            return new Promise(function (resolve) {
-                var r = store.getAll();
-                r.onsuccess = function () {
-                    resolve((r.result || []).sort(function (a, b) { return b.ts - a.ts; }));
-                };
-                r.onerror = function () { resolve([]); };
-            });
+        return run([ENTRIES], 'readonly', function (store, out) {
+            var r = store(ENTRIES).getAll();
+            r.onsuccess = function () {
+                out.value = (r.result || []).sort(function (a, b) { return b.ts - a.ts; });
+            };
         }).catch(function () { return []; });
+    }
+
+    function loadImageData(id) {
+        return run([IMAGES], 'readonly', function (store, out) {
+            var r = store(IMAGES).get(id);
+            r.onsuccess = function () { out.value = r.result ? r.result.dataUrl : null; };
+        });
+    }
+
+    function loadTune(id) {
+        return run([TUNES], 'readonly', function (store, out) {
+            var r = store(TUNES).get(id);
+            r.onsuccess = function () { out.value = r.result ? r.result.tune : null; };
+        });
     }
 
     // Ein aktualisiertes Ergebnis (z. B. nach dem Neu-Zusammensetzen) zurückschreiben.
     function updateHistoryRecord(id, dataUrl, inpaint) {
-        return tx('readonly').then(function (store) {
-            return new Promise(function (resolve) {
-                var r = store.get(id);
-                r.onsuccess = function () { resolve(r.result); };
-                r.onerror = function () { resolve(null); };
+        return thumbnail(dataUrl, 320).then(function (thumb) {
+            return run([ENTRIES, IMAGES, TUNES], 'readwrite', function (store) {
+                var e = store(ENTRIES).get(id);
+                e.onsuccess = function () {
+                    if (!e.result) return;
+                    if (thumb && thumb.length <= THUMB_MAX) e.result.thumb = thumb;
+                    store(ENTRIES).put(e.result);
+                    store(IMAGES).put({ id: id, dataUrl: dataUrl });
+                    if (!inpaint) return;
+                    var t = store(TUNES).get(id);
+                    t.onsuccess = function () {
+                        if (!t.result) return;
+                        t.result.tune.overlay = inpaint.overlay;
+                        t.result.tune.feather = inpaint.feather;
+                        store(TUNES).put(t.result);
+                    };
+                };
             });
-        }).then(function (rec) {
-            if (!rec) return;
-            return thumbnail(dataUrl, 320).then(function (thumb) {
-                rec.dataUrl = dataUrl;
-                rec.thumb = thumb;
-                if (rec.tune && inpaint) {
-                    rec.tune.overlay = inpaint.overlay;
-                    rec.tune.feather = inpaint.feather;
-                }
-                return write(function (store) { store.put(rec); });
-            }).then(renderHistory);
-        }).catch(function (e) { console.warn('Verlauf-Update fehlgeschlagen:', e); });
+        }).then(renderHistory).catch(function (e) { console.warn('Verlauf-Update fehlgeschlagen:', e); });
+    }
+
+    function deleteEntries(ids) {
+        return run([ENTRIES, IMAGES, TUNES], 'readwrite', function (store) {
+            ids.forEach(function (id) {
+                store(ENTRIES).delete(id);
+                store(IMAGES).delete(id);
+                store(TUNES).delete(id);
+            });
+        });
     }
 
     function prune() {
@@ -1443,13 +1496,54 @@
             var drop = items.slice(HISTORY_MAX);
             // Die Daten fürs Nachjustieren sind gross – nur die neuesten behalten.
             var strip = items.slice(0, HISTORY_MAX).filter(function (i, idx) {
-                return i.tune && idx >= TUNE_KEEP;
+                return i.hasTune && idx >= TUNE_KEEP;
             });
             if (!drop.length && !strip.length) return;
-            return write(function (store) {
-                drop.forEach(function (i) { store.delete(i.id); });
-                strip.forEach(function (i) { delete i.tune; store.put(i); });
+            return run([ENTRIES, IMAGES, TUNES], 'readwrite', function (store) {
+                drop.forEach(function (i) {
+                    store(ENTRIES).delete(i.id);
+                    store(IMAGES).delete(i.id);
+                    store(TUNES).delete(i.id);
+                });
+                strip.forEach(function (i) {
+                    store(TUNES).delete(i.id);
+                    i.hasTune = false;
+                    store(ENTRIES).put(i);
+                });
             });
+        });
+    }
+
+    // Einträge aus Version 1 in die neue Aufteilung übernehmen – einer pro
+    // Transaktion, damit nie mehr als ein Eintrag im Speicher liegt und ein
+    // Abbruch beim nächsten Laden dort weitermacht, wo er aufgehört hat.
+    function migrateLegacy() {
+        return openDb().then(function (db) {
+            if (!db.objectStoreNames.contains(LEGACY)) return false;
+            return run([LEGACY], 'readonly', function (store, out) {
+                var r = store(LEGACY).getAllKeys();
+                r.onsuccess = function () { out.value = r.result || []; };
+            }).then(function (keys) {
+                if (!keys.length) return false;
+                return keys.reduce(function (chain, key) {
+                    return chain.then(function () { return migrateOne(key); });
+                }, Promise.resolve()).then(function () { return true; });
+            });
+        });
+    }
+
+    function migrateOne(key) {
+        return run([LEGACY, ENTRIES, IMAGES, TUNES], 'readwrite', function (store) {
+            var r = store(LEGACY).get(key);
+            r.onsuccess = function () {
+                var rec = r.result;
+                if (rec) {
+                    store(ENTRIES).put(entryOf(rec, rec.thumb));
+                    if (rec.dataUrl) store(IMAGES).put({ id: rec.id, dataUrl: rec.dataUrl });
+                    if (rec.tune) store(TUNES).put({ id: rec.id, tune: rec.tune });
+                }
+                store(LEGACY).delete(key);
+            };
         });
     }
 
@@ -1507,19 +1601,30 @@
         return line;
     }
 
+    // Holt das volle Bild eines Eintrags erst beim Antippen.
+    function withImage(item, fn) {
+        loadImageData(item.id).then(function (url) {
+            if (!url) { alert('Das Bild ist nicht mehr im Verlauf.'); return; }
+            fn(url);
+        }).catch(function (e) { alert('Bild konnte nicht geladen werden: ' + e.message); });
+    }
+
     function renderHistory() {
         return allHistory().then(function (items) {
             var grid = $('#historyGrid');
+            var missing = [];
             grid.innerHTML = '';
             $('#historyCount').textContent = items.length ? items.length + ' Bilder' : 'leer';
 
             items.forEach(function (item) {
                 var box = el('div', 'hist-item');
                 var img = el('img');
-                img.src = item.thumb || item.dataUrl;
                 img.alt = item.prompt || '';
                 img.loading = 'lazy';
-                img.addEventListener('click', function () { openLightbox(item.dataUrl); });
+                img.setAttribute('data-id', item.id);
+                if (item.thumb) img.src = item.thumb;
+                else missing.push({ item: item });
+                img.addEventListener('click', function () { withImage(item, openLightbox); });
                 box.appendChild(img);
 
                 var meta = el('div', 'hist-meta');
@@ -1532,25 +1637,30 @@
                 var acts = el('div', 'hist-actions');
                 var reuse = el('button', null, 'Als Quelle');
                 reuse.type = 'button';
-                reuse.addEventListener('click', function () { useAsSource(item.dataUrl); });
+                reuse.addEventListener('click', function () { withImage(item, useAsSource); });
                 acts.appendChild(reuse);
 
-                if (item.tune) {
+                if (item.hasTune) {
                     var tune = el('button', null, 'Maske anpassen');
                     tune.type = 'button';
-                    tune.addEventListener('click', function () { reopenTune(item); });
+                    tune.addEventListener('click', function () {
+                        Promise.all([loadImageData(item.id), loadTune(item.id)]).then(function (got) {
+                            if (!got[0] || !got[1]) { alert('Die Daten fürs Nachjustieren sind nicht mehr vorhanden.'); return; }
+                            reopenTune(item, got[0], got[1]);
+                        }).catch(function (e) { alert('Konnte nicht geladen werden: ' + e.message); });
+                    });
                     acts.appendChild(tune);
                 }
 
                 var inp = el('button', null, 'Inpaint');
                 inp.type = 'button';
-                inp.addEventListener('click', function () { openInInpaint(item.dataUrl); });
+                inp.addEventListener('click', function () { withImage(item, openInInpaint); });
                 acts.appendChild(inp);
 
                 var del = el('button', null, 'Löschen');
                 del.type = 'button';
                 del.addEventListener('click', function () {
-                    write(function (store) { store.delete(item.id); })
+                    deleteEntries([item.id])
                         .then(renderHistory)
                         .catch(function (e) { console.warn(e); });
                 });
@@ -1560,34 +1670,61 @@
                 box.appendChild(meta);
                 grid.appendChild(box);
             });
+            healThumbs(missing);
         });
+    }
+
+    // Fehlende Vorschaubilder nachbauen – nacheinander, damit nie mehr als ein
+    // volles Bild gleichzeitig im Speicher liegt.
+    var healing = {};
+
+    function healThumbs(list) {
+        list = list.filter(function (entry) { return !healing[entry.item.id]; });
+        list.forEach(function (entry) { healing[entry.item.id] = true; });
+        list.reduce(function (chain, entry) {
+            return chain.then(function () {
+                return loadImageData(entry.item.id).then(function (url) {
+                    return url ? thumbnail(url, 320) : null;
+                }).then(function (thumb) {
+                    if (!thumb || thumb.length > THUMB_MAX) return;
+                    // Die Liste kann inzwischen neu gezeichnet worden sein.
+                    $$('#historyGrid img').forEach(function (im) {
+                        if (im.getAttribute('data-id') === entry.item.id) im.src = thumb;
+                    });
+                    entry.item.thumb = thumb;
+                    return run([ENTRIES], 'readwrite', function (store) { store(ENTRIES).put(entry.item); });
+                }).catch(function (e) {
+                    console.warn('Vorschaubild fehlt:', e);
+                }).then(function () { delete healing[entry.item.id]; });
+            });
+        }, Promise.resolve());
     }
 
     // Einen Inpaint-Eintrag zum Nachbearbeiten zurückholen: Basisbild und Maske
     // landen wieder im Editor, das Ergebnis bekommt eine Karte mit Kanten-Regler
     // und "Aus Editor übernehmen".
-    function reopenTune(item) {
+    function reopenTune(item, dataUrl, tune) {
         var spec = {
             mode: 'inpaint',
             prompt: item.prompt,
-            formatLabel: item.format || (item.tune.w + ' × ' + item.tune.h + ' px'),
+            formatLabel: item.format || (tune.w + ' × ' + tune.h + ' px'),
             quality: item.quality,
             composite: true,
             inpaint: {
-                base: item.tune.base,
-                overlay: item.tune.overlay,
-                w: item.tune.w,
-                h: item.tune.h,
-                feather: item.tune.feather || 0
+                base: tune.base,
+                overlay: tune.overlay,
+                w: tune.w,
+                h: tune.h,
+                feather: tune.feather || 0
             }
         };
         var ui = createJobCard(spec);
         ui.statusText = 'Aus Verlauf';
-        showResult(ui, spec, { dataUrl: item.dataUrl, raw: item.tune.raw }, item.id);
+        showResult(ui, spec, { dataUrl: dataUrl, raw: tune.raw }, item.id);
 
         setMode('inpaint', false);
-        loadBase(item.tune.base)
-            .then(function () { return restoreMask(item.tune.overlay, item.tune.feather || 0); })
+        loadBase(tune.base)
+            .then(function () { return restoreMask(tune.overlay, tune.feather || 0); })
             .then(function () {
                 $('#historyCard').open = false;
                 inpaintStage.scrollIntoView({ behavior: 'smooth', block: 'center' });
@@ -1597,9 +1734,13 @@
 
     $('#historyClear').addEventListener('click', function () {
         if (!confirm('Gesamten Verlauf löschen?')) return;
-        write(function (store) { store.clear(); })
-            .then(renderHistory)
-            .catch(function (e) { console.warn(e); });
+        openDb().then(function (db) {
+            var names = [ENTRIES, IMAGES, TUNES];
+            if (db.objectStoreNames.contains(LEGACY)) names.push(LEGACY);
+            return run(names, 'readwrite', function (store) {
+                names.forEach(function (n) { store(n).clear(); });
+            });
+        }).then(renderHistory).catch(function (e) { console.warn(e); });
     });
 
     /* ------------------------------------------------------------------ */
@@ -1626,6 +1767,9 @@
     setMode('edit');
     updateFormatUI();
     renderPreviews();
-    renderHistory();
+    renderHistory()
+        .then(migrateLegacy)
+        .then(function (moved) { if (moved) return prune().then(renderHistory); })
+        .catch(function (e) { console.warn('Verlauf konnte nicht übernommen werden:', e); });
 
 })();
