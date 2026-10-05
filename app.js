@@ -419,7 +419,9 @@
     var inpaintStage = $('#inpaintStage');
     var inpaintTools = $('#inpaintTools');
     var brushSize = $('#brushSize');
+    var FEATHER_MAX = 10;    // Kante: 0–10
     var featherRange = $('#featherRange');
+    featherRange.max = String(FEATHER_MAX);
 
     var PREVIEW_EDGE = 1400;
 
@@ -489,8 +491,8 @@
             ctx.drawImage(img, 0, 0, maskCanvas.width, maskCanvas.height);
             undoStack.length = 0;
             if (typeof featherValue === 'number') {
-                featherRange.value = featherValue;
-                $('#featherOut').textContent = featherValue;
+                featherRange.value = Math.min(featherValue, FEATHER_MAX);
+                $('#featherOut').textContent = featherRange.value;
             }
             renderMaskView();
         });
@@ -1199,8 +1201,10 @@
         var slider = document.createElement('input');
         slider.type = 'range';
         slider.min = '0';
-        slider.max = '40';
-        slider.value = String(spec.inpaint.feather || 0);
+        // Einträge von früher können eine Kante über dem heutigen Maximum haben.
+        spec.inpaint.feather = Math.min(spec.inpaint.feather || 0, FEATHER_MAX);
+        slider.max = String(FEATHER_MAX);
+        slider.value = String(spec.inpaint.feather);
         row.appendChild(slider);
         var out = el('output', null, slider.value);
         row.appendChild(out);
