@@ -447,7 +447,7 @@
         if (!baseW) return;
         var ctx = maskView.getContext('2d');
         ctx.clearRect(0, 0, maskView.width, maskView.height);
-        ctx.drawImage(featheredMask(maskCanvas, maskView.width, maskView.height, feather()), 0, 0);
+        ctx.drawImage(featheredMask(maskCanvas, maskView.width, maskView.height, feather(), 512, 4), 0, 0);
     }
 
     function loadBase(src) {
@@ -637,7 +637,80 @@
     }
 
     // Weiche Kante für die lokale Nachbearbeitung.
-    function featheredMask(maskImg, w, h, feather) {
+    // Weiche Maskenkante als echte Gausskurve – in jedem Browser gleich.
+    // Früher lief das über canvas.filter, das Safari nicht kann: dort wurde die
+    // Maske stark verkleinert und wieder hochgezogen, was eine kantige,
+    // pixelige Treppe ergab. Jetzt wird der Alphakanal selbst weichgezeichnet:
+    // drei Box-Durchläufe je Richtung ergeben praktisch eine Gausskurve.
+    // Gerechnet wird verkleinert (eine weiche Kante hat keine feinen Details)
+    // und danach glatt hochskaliert.
+
+    var MASK_RGB = [255, 213, 0];   // Farbe des Pinsels (#ffd500)
+    // So viele Rechenpixel pro Standardabweichung reichen, damit das
+    // Hochskalieren einer weichen Kante glatt bleibt. Eine breite Kante kann
+    // deshalb in einem viel kleineren Bild gerechnet werden als eine schmale.
+    var BLUR_SAMPLES = 8;
+
+    function boxSizesForGauss(sigma, n) {
+        var wIdeal = Math.sqrt(12 * sigma * sigma / n + 1);
+        var wl = Math.floor(wIdeal);
+        if (wl % 2 === 0) wl--;
+        var wu = wl + 2;
+        var mIdeal = (12 * sigma * sigma - n * wl * wl - 4 * n * wl - 3 * n) / (-4 * wl - 4);
+        var m = Math.round(mIdeal);
+        var sizes = [];
+        for (var i = 0; i < n; i++) sizes.push(i < m ? wl : wu);
+        return sizes;
+    }
+
+    // Gleitender Mittelwert über 2r+1 Werte einer Zeile oder Spalte. Ausserhalb
+    // des Bildes gilt der Randwert, damit eine bis an den Rand gemalte Maske
+    // dort nicht ausfranst.
+    function boxBlurLine(src, dst, start, stride, n, r) {
+        var inv = 1 / (2 * r + 1);
+        var last = n - 1;
+        var first = src[start];
+        var end = src[start + last * stride];
+        var sum = 0, i, k;
+        for (i = -r; i <= r; i++) sum += src[start + (i < 0 ? 0 : (i > last ? last : i)) * stride];
+
+        // Nur die ersten und letzten r Werte brauchen den Randwert – der
+        // grosse Rest der Zeile läuft ohne Abfragen.
+        var a = Math.min(r + 1, n);          // bis hier fällt links der Randwert weg
+        var b = Math.max(a, n - r - 1);      // ab hier kommt rechts der Randwert dazu
+        k = start;
+        for (i = 0; i < a; i++, k += stride) {
+            dst[k] = sum * inv;
+            sum += (i + r + 1 > last ? end : src[start + (i + r + 1) * stride]) - first;
+        }
+        var addIdx = start + (a + r + 1) * stride;
+        var remIdx = start + (a - r) * stride;
+        for (; i < b; i++, k += stride, addIdx += stride, remIdx += stride) {
+            dst[k] = sum * inv;
+            sum += src[addIdx] - src[remIdx];
+        }
+        for (; i < n; i++, k += stride) {
+            dst[k] = sum * inv;
+            sum += end - src[start + (i - r < 0 ? 0 : i - r) * stride];
+        }
+    }
+
+    function gaussBlur(alpha, w, h, sigma) {
+        var tmp = new Float32Array(alpha.length);
+        boxSizesForGauss(sigma, 3).forEach(function (size) {
+            var r = (size - 1) / 2;
+            if (r < 1) return;
+            var x, y;
+            for (y = 0; y < h; y++) boxBlurLine(alpha, tmp, y * w, 1, w, r);
+            for (x = 0; x < w; x++) boxBlurLine(tmp, alpha, x, w, h, r);
+        });
+        return alpha;
+    }
+
+    // workEdge / samples: längste Kante und Rechenpixel pro Standardabweichung.
+    // Die Vorschau rechnet gröber, damit das Malen flüssig bleibt; das
+    // Zusammensetzen genauer.
+    function featheredMask(maskImg, w, h, feather, workEdge, samples) {
         var out = document.createElement('canvas');
         out.width = w; out.height = h;
         var ctx = out.getContext('2d');
@@ -646,21 +719,39 @@
             ctx.drawImage(maskImg, 0, 0, w, h);
             return out;
         }
-        if (typeof ctx.filter === 'string') {
-            ctx.filter = 'blur(' + blur + 'px)';
-            ctx.drawImage(maskImg, 0, 0, w, h);
-            ctx.filter = 'none';
-            return out;
+
+        var s = Math.min(1, (workEdge || 1024) / Math.max(w, h), (samples || BLUR_SAMPLES) / blur);
+        var ww = Math.max(1, Math.round(w * s));
+        var wh = Math.max(1, Math.round(h * s));
+        var work = document.createElement('canvas');
+        work.width = ww; work.height = wh;
+        // Pixel werden hier gelesen und geschrieben – im Arbeitsspeicher statt
+        // auf der Grafikkarte spart das die langsame Rückübertragung.
+        var wctx = work.getContext('2d', { willReadFrequently: true });
+        wctx.imageSmoothingEnabled = true;
+        wctx.imageSmoothingQuality = 'high';
+        wctx.drawImage(maskImg, 0, 0, ww, wh);
+
+        var img = wctx.getImageData(0, 0, ww, wh);
+        var d = img.data;
+        var n = ww * wh;
+        var a = new Float32Array(n);
+        var i, p;
+        for (i = 0; i < n; i++) a[i] = d[i * 4 + 3];
+        gaussBlur(a, ww, wh, blur * s);
+        for (i = 0; i < n; i++) {
+            p = i * 4;
+            d[p] = MASK_RGB[0]; d[p + 1] = MASK_RGB[1]; d[p + 2] = MASK_RGB[2];
+            d[p + 3] = a[i];
         }
-        var k = Math.max(2, blur / 2);
-        var sw = Math.max(1, Math.round(w / k));
-        var sh = Math.max(1, Math.round(h / k));
-        var small = document.createElement('canvas');
-        small.width = sw; small.height = sh;
-        small.getContext('2d').drawImage(maskImg, 0, 0, sw, sh);
-        ctx.imageSmoothingQuality = 'high';
-        ctx.drawImage(small, 0, 0, w, h);
-        releaseCanvas(small);
+        wctx.putImageData(img, 0, 0);
+
+        // Fürs Vergrössern einer bereits weichen Kante genügt die normale
+        // Interpolation – 'high' kostet hier ein Vielfaches ohne sichtbaren Gewinn.
+        ctx.imageSmoothingEnabled = true;
+        ctx.imageSmoothingQuality = 'low';
+        ctx.drawImage(work, 0, 0, w, h);
+        releaseCanvas(work);
         return out;
     }
 

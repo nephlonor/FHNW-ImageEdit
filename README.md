@@ -46,6 +46,15 @@ Wie im Referenz-Projekt [NanoBanana](https://nephlonor.github.io/NanoBanana/):
 Der Regler **Kante** zeigt die Weichheit direkt in der Vorschau über dem
 Basisbild – was man sieht, ist die Kante, mit der zusammengesetzt wird.
 
+Die weiche Kante ist eine Gausskurve, in jedem Browser gleich berechnet: drei
+Box-Weichzeichnungen je Richtung auf dem Alphakanal, in einem verkleinerten
+Arbeitsbild, das danach glatt hochskaliert wird. Die Grösse des Arbeitsbilds
+richtet sich nach der Kante – je weicher, desto kleiner, weil eine breite Kante
+keine feinen Details hat. Am Bildrand gilt der Randwert, eine bis an den Rand
+gemalte Maske bleibt dort also voll deckend. Früher lief das über
+`canvas.filter`, das Safari nicht unterstützt; dort entstand eine pixelige
+Treppe.
+
 ## Maske nachträglich anpassen
 
 Jedes fertige Inpaint behält die Rohausgabe des Modells und lässt sich ohne neue
