@@ -43,8 +43,10 @@ Wie im Referenz-Projekt [NanoBanana](https://nephlonor.github.io/NanoBanana/):
    Ergebnis etwas zu ändern. Die Zeichenflächen werden direkt nach dem
    Zusammensetzen freigegeben.
 
-Der Regler **Kante** zeigt die Weichheit direkt in der Vorschau über dem
-Basisbild – was man sieht, ist die Kante, mit der zusammengesetzt wird.
+Der Regler **Kante** (0–10, Standard 10) zeigt die Weichheit direkt in der
+Vorschau über dem Basisbild – was man sieht, ist die Kante, mit der
+zusammengesetzt wird. Einträge aus der Zeit, als der Regler bis 40 ging, werden
+beim Öffnen auf 10 begrenzt.
 
 Die weiche Kante ist eine Gausskurve, in jedem Browser gleich berechnet: drei
 Box-Weichzeichnungen je Richtung auf dem Alphakanal, in einem verkleinerten
