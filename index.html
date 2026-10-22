@@ -6,7 +6,7 @@
 <title>FHNW ImageEditor</title>
 <meta name="theme-color" content="#0c0c0c">
 <link rel="icon" href="assets/favicon.svg" type="image/svg+xml">
-<link rel="stylesheet" href="styles.css?v=20261005b">
+<link rel="stylesheet" href="styles.css?v=20261022a">
 </head>
 <body>
 
@@ -20,6 +20,11 @@
 <div class="wrap api-slot" id="apiSlotTop"></div>
 
 <main class="wrap">
+
+    <div class="seg model-seg" id="modelSeg" role="group" aria-label="Modell">
+        <button class="seg-btn is-active" type="button" data-model="gpt">GPT Image</button>
+        <button class="seg-btn" type="button" data-model="nano">Nano Banana 2.1</button>
+    </div>
 
     <nav class="tabs" role="tablist" aria-label="Modus">
         <button class="tab is-active" id="tabEdit" role="tab" aria-selected="true" data-mode="edit">Edit</button>
@@ -69,7 +74,7 @@
                 <button class="seg-btn" type="button" data-tier="4K">4K</button>
             </div>
         </div>
-        <label class="check">
+        <label class="check" id="bgTransparentLabel">
             <input type="checkbox" id="bgTransparent">
             <span>Transparenter Hintergrund</span>
         </label>
@@ -134,6 +139,6 @@
     <img id="lightboxImg" alt="">
 </div>
 
-<script src="app.js?v=20261005b"></script>
+<script src="app.js?v=20261022a"></script>
 </body>
 </html>

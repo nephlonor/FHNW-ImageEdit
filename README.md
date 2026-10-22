@@ -72,6 +72,15 @@ Generierung – und damit ohne Kosten – weiter justieren:
 Aus dem Verlauf führt **Maske anpassen** denselben Weg. Die dafür nötigen Daten
 werden für die 12 neuesten Einträge aufbewahrt.
 
+## Modell
+
+Oben lässt sich zwischen **GPT Image** und **Nano Banana 2.1** umschalten
+(`google/nano-banana-2.1/edit` bzw. `google/nano-banana-2.1` ohne Eingabebild).
+Bei Nano Banana gilt: nur 2K und 4K, `safety_tolerance` fest auf 6 (am wenigsten
+streng), kein Qualitätsregler, kein transparenter Hintergrund. Die Formatliste
+passt sich an (z. B. 1:8, 1:4, 4:1, 8:1 statt 1:3, 9:21, 1:2, 2:1, 3:1). Inpaint
+funktioniert mit beiden Modellen gleich.
+
 ## Format
 
 * **Festes Seitenverhältnis** – von 1:3 bis 3:1 (1:3, 9:21, 1:2, 9:16, 2:3, 3:4,
