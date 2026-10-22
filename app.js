@@ -1,5 +1,5 @@
 /* FHNW ImageEditor
- * GPT Image 2.5 (Sunburst) Edit über die fal.ai Queue-API.
+ * GPT Image 2.5 (Sunburst) und Nano Banana 2.1 über die fal.ai Queue-API.
  * Reine Client-App: der API-Key bleibt im Browser des Studierenden. */
 
 (function () {
@@ -21,6 +21,17 @@
     var QUALITY_LABELS = ['low', 'medium', 'high', 'high+'];
     var REQ_FORMAT = 'png';
 
+    // Nano Banana 2.1 (Google) als zweites Modell. Nur 2K und 4K, Moderation
+    // auf der lockersten Stufe (6). Kein Qualitätsregler, kein transparenter
+    // Hintergrund.
+    var NANO_MODEL_ID = 'google/nano-banana-2.1/edit';
+    var NANO_TEXT_MODEL_ID = 'google/nano-banana-2.1';
+    var NANO_QUEUE_URL = 'https://queue.fal.run/' + NANO_MODEL_ID;
+    var NANO_TEXT_QUEUE_URL = 'https://queue.fal.run/' + NANO_TEXT_MODEL_ID;
+    var NANO_SAFETY = '6';
+    var NANO_LABEL = 'Nano Banana 2.1';
+    var MODEL_STORAGE = 'fhnw.imageeditor.model';
+
     var KEY_STORAGE = 'fhnw.imageeditor.key';
     var RATIO_STORAGE = 'fhnw.imageeditor.ratio';
     var TIER_STORAGE = 'fhnw.imageeditor.tier';
@@ -41,11 +52,14 @@
     var TEXT_MIN_PX = 655360;
     var TEXT_FALLBACK_RATIO = '3:2';
 
+    // only: 'gpt' / 'nano' – Seitenverhältnisse, die nur ein Modell kennt.
     var RATIOS = [
         { value: 'auto', label: 'AUTO' },
-        { value: '1:3', w: 1, h: 3 },
-        { value: '9:21', w: 9, h: 21 },
-        { value: '1:2', w: 1, h: 2 },
+        { value: '1:8', w: 1, h: 8, only: 'nano' },
+        { value: '1:4', w: 1, h: 4, only: 'nano' },
+        { value: '1:3', w: 1, h: 3, only: 'gpt' },
+        { value: '9:21', w: 9, h: 21, only: 'gpt' },
+        { value: '1:2', w: 1, h: 2, only: 'gpt' },
         { value: '9:16', w: 9, h: 16 },
         { value: '2:3', w: 2, h: 3 },
         { value: '3:4', w: 3, h: 4 },
@@ -55,9 +69,11 @@
         { value: '4:3', w: 4, h: 3 },
         { value: '3:2', w: 3, h: 2 },
         { value: '16:9', w: 16, h: 9 },
-        { value: '2:1', w: 2, h: 1 },
+        { value: '2:1', w: 2, h: 1, only: 'gpt' },
         { value: '21:9', w: 21, h: 9 },
-        { value: '3:1', w: 3, h: 1 }
+        { value: '3:1', w: 3, h: 1, only: 'gpt' },
+        { value: '4:1', w: 4, h: 1, only: 'nano' },
+        { value: '8:1', w: 8, h: 1, only: 'nano' }
     ];
 
     /* ------------------------------------------------------------------ */
@@ -822,24 +838,48 @@
 
     var ratioSelect = $('#ratioSelect');
     var tierSeg = $('#tierSeg');
+    var modelSeg = $('#modelSeg');
 
     var currentRatio = 'auto';
     var currentTier = '2K';
+    var currentModel = 'gpt';
 
     try {
         currentRatio = localStorage.getItem(RATIO_STORAGE) || 'auto';
         currentTier = localStorage.getItem(TIER_STORAGE) || '2K';
+        if (localStorage.getItem(MODEL_STORAGE) === 'nano') currentModel = 'nano';
     } catch (e) { /* egal */ }
     if (!TIER_PX[currentTier]) currentTier = '2K';
 
-    RATIOS.forEach(function (r) {
-        var o = document.createElement('option');
-        o.value = r.value;
-        o.textContent = r.label || r.value;
-        ratioSelect.appendChild(o);
-    });
-    if (!RATIOS.some(function (r) { return r.value === currentRatio; })) currentRatio = 'auto';
-    ratioSelect.value = currentRatio;
+    function isNano() { return currentModel === 'nano'; }
+
+    function ratiosFor(model) {
+        return RATIOS.filter(function (r) { return !r.only || r.only === model; });
+    }
+
+    function fillRatios() {
+        var list = ratiosFor(currentModel);
+        ratioSelect.innerHTML = '';
+        list.forEach(function (r) {
+            var o = document.createElement('option');
+            o.value = r.value;
+            o.textContent = r.label || r.value;
+            ratioSelect.appendChild(o);
+        });
+        if (!list.some(function (r) { return r.value === currentRatio; })) {
+            // Gewähltes Format gibt es beim anderen Modell nicht – nächstliegendes nehmen.
+            var cur = ratioEntry(currentRatio), best = 'auto', bestDist = Infinity;
+            if (cur.w) {
+                list.forEach(function (r) {
+                    if (!r.w) return;
+                    var dist = Math.abs(Math.log((r.w / r.h) / (cur.w / cur.h)));
+                    if (dist < bestDist) { bestDist = dist; best = r.value; }
+                });
+            }
+            currentRatio = best;
+        }
+        ratioSelect.value = currentRatio;
+    }
 
     function ratioEntry(value) {
         for (var i = 0; i < RATIOS.length; i++) if (RATIOS[i].value === value) return RATIOS[i];
@@ -903,7 +943,7 @@
         if (!first || !first.w || !first.h) return null;
         var target = first.w / first.h;
         var best = null, bestDist = Infinity;
-        RATIOS.forEach(function (r) {
+        ratiosFor(currentModel).forEach(function (r) {
             if (!r.w) return;
             var dist = Math.abs(Math.log((r.w / r.h) / target));
             if (dist < bestDist) { bestDist = dist; best = r.value; }
@@ -933,6 +973,7 @@
     // 'xhigh' heisst im UI „high+“, damit es sich von der Stufe darunter
     // unterscheidet und trotzdem nicht als API-Name dasteht.
     function qualityLabel(value) {
+        if (value === 'nano') return NANO_LABEL;
         var i = QUALITY_STEPS.indexOf(value);
         return i < 0 ? '' : QUALITY_LABELS[i];
     }
@@ -947,9 +988,16 @@
         // Im Inpaint-Modus folgt die Ausgabe zwingend dem Basisbild, und das
         // Zusammensetzen füllt transparente Stellen wieder – beides ohne Wahl.
         $('#formatCard').classList.toggle('hidden', mode === 'inpaint');
+        // Nano Banana: weder Qualitätsstufe noch transparenter Hintergrund.
+        $('#qualityCard').classList.toggle('hidden', isNano());
+        $('#bgTransparentLabel').classList.toggle('hidden', isNano());
+        $$('.seg-btn', modelSeg).forEach(function (b) {
+            b.classList.toggle('is-active', b.dataset.model === currentModel);
+        });
         // AUTO leitet vom Eingabebild ab – ohne Bild greift statt dessen 3:2,
-        // dann zählt auch die Grössenwahl wieder.
-        tierSeg.classList.toggle('is-off', currentRatio === 'auto' && refs.length > 0);
+        // dann zählt auch die Grössenwahl wieder. Nano Banana wendet die
+        // Auflösung auch bei AUTO an.
+        tierSeg.classList.toggle('is-off', !isNano() && currentRatio === 'auto' && refs.length > 0);
 
         $$('.seg-btn', tierSeg).forEach(function (b) {
             b.classList.toggle('is-active', b.dataset.tier === currentTier);
@@ -996,6 +1044,17 @@
         currentQuality = parseInt(qualityRange.value, 10) || 0;
         try { localStorage.setItem(QUALITY_STORAGE, String(currentQuality)); } catch (e) { /* egal */ }
         updateQualityDots();
+    });
+
+    $$('.seg-btn', modelSeg).forEach(function (b) {
+        b.addEventListener('click', function () {
+            currentModel = b.dataset.model === 'nano' ? 'nano' : 'gpt';
+            try { localStorage.setItem(MODEL_STORAGE, currentModel); } catch (e) {}
+            fillRatios();
+            try { localStorage.setItem(RATIO_STORAGE, currentRatio); } catch (e) {}
+            matchedFirst = null;
+            syncRatioToFirstImage();
+        });
     });
 
     ratioSelect.addEventListener('change', function () {
@@ -1097,7 +1156,8 @@
         var head = el('div', 'job-head');
         head.appendChild(el('span', 'job-badge', modeLabel(spec.mode)));
         head.appendChild(el('span', null, spec.formatLabel));
-        if (qualityLabel(spec.quality)) head.appendChild(el('span', 'job-quality', qualityLabel(spec.quality)));
+        if (spec.model === 'nano') head.appendChild(el('span', 'job-quality', NANO_LABEL));
+        else if (qualityLabel(spec.quality)) head.appendChild(el('span', 'job-quality', qualityLabel(spec.quality)));
         head.appendChild(el('span', 'job-spacer'));
         var status = el('span', 'job-status', 'Wird gesendet …');
         head.appendChild(status);
@@ -1267,8 +1327,9 @@
             prompt: promptText,
             ratio: currentRatio,
             tier: currentTier,
-            quality: QUALITY_STEPS[currentQuality] || QUALITY_STEPS[0],
-            transparent: mode === 'edit' && $('#bgTransparent').checked
+            model: currentModel,
+            quality: isNano() ? null : (QUALITY_STEPS[currentQuality] || QUALITY_STEPS[0]),
+            transparent: !isNano() && mode === 'edit' && $('#bgTransparent').checked
         };
 
         if (mode === 'inpaint') {
@@ -1278,6 +1339,7 @@
             spec.apiPrompt = inpaintPrompt(promptText, refs.length);
             spec.imageSize = 'auto';
             spec.formatLabel = baseW + ' × ' + baseH + ' px';
+            if (isNano()) spec.endpoint = NANO_QUEUE_URL;
             spec.composite = true;
             spec.inpaint = {
                 // Zusammengesetzt wird über die verlustfreie Quelle, nicht über
@@ -1292,15 +1354,26 @@
             // Kein Eingabebild – dann ist es eine reine Text-zu-Bild-Generierung.
             spec.mode = 'text';
             spec.images = [];
-            spec.endpoint = TEXT_QUEUE_URL;
-            var td = dimsFor(currentRatio, currentTier, true);
-            spec.imageSize = td;
-            spec.formatLabel = textRatio() + ' · ' + td.width + ' × ' + td.height;
+            if (isNano()) {
+                spec.endpoint = NANO_TEXT_QUEUE_URL;
+                spec.formatLabel = ratioEntry(currentRatio).label || currentRatio;
+                spec.formatLabel += ' · ' + currentTier;
+            } else {
+                spec.endpoint = TEXT_QUEUE_URL;
+                var td = dimsFor(currentRatio, currentTier, true);
+                spec.imageSize = td;
+                spec.formatLabel = textRatio() + ' · ' + td.width + ' × ' + td.height;
+            }
         } else {
             spec.images = refs.map(function (r) { return r.dataUrl; });
-            var d = dimsFor(currentRatio, currentTier);
-            spec.imageSize = d || 'auto';
-            spec.formatLabel = d ? (currentRatio + ' · ' + d.width + ' × ' + d.height) : 'AUTO';
+            if (isNano()) {
+                spec.endpoint = NANO_QUEUE_URL;
+                spec.formatLabel = (ratioEntry(currentRatio).label || currentRatio) + ' · ' + currentTier;
+            } else {
+                var d = dimsFor(currentRatio, currentTier);
+                spec.imageSize = d || 'auto';
+                spec.formatLabel = d ? (currentRatio + ' · ' + d.width + ' × ' + d.height) : 'AUTO';
+            }
         }
 
         var bytes = spec.images.reduce(function (sum, u) { return sum + approxBytes(u); }, 0);
@@ -1323,15 +1396,29 @@
             cancelBtn.remove();
         });
 
-        var payload = {
-            prompt: spec.apiPrompt || spec.prompt,
-            image_size: spec.imageSize,
-            quality: spec.quality || QUALITY_STEPS[0],
-            num_images: 1,
-            output_format: REQ_FORMAT
-        };
+        var payload;
+        if (spec.model === 'nano') {
+            payload = {
+                prompt: spec.apiPrompt || spec.prompt,
+                // Inpaint: Ausgabe folgt dem Basisbild, zusammengesetzt wird ohnehin
+                // in Arbeitsgrösse (max. 2048 px) – 2K genügt.
+                aspect_ratio: spec.mode === 'inpaint' ? 'auto' : spec.ratio,
+                resolution: spec.mode === 'inpaint' ? '2K' : spec.tier,
+                safety_tolerance: NANO_SAFETY,
+                num_images: 1,
+                output_format: REQ_FORMAT
+            };
+        } else {
+            payload = {
+                prompt: spec.apiPrompt || spec.prompt,
+                image_size: spec.imageSize,
+                quality: spec.quality || QUALITY_STEPS[0],
+                num_images: 1,
+                output_format: REQ_FORMAT
+            };
+            if (spec.transparent) payload.background = 'transparent';
+        }
         if (spec.mode !== 'text') payload.image_urls = spec.images;
-        if (spec.transparent) payload.background = 'transparent';
 
         var handle = null;
 
@@ -1385,7 +1472,7 @@
                 mode: spec.mode,
                 prompt: spec.prompt,
                 format: spec.formatLabel,
-                quality: spec.quality,
+                quality: spec.model === 'nano' ? 'nano' : spec.quality,
                 dataUrl: out.dataUrl || out.remote
             };
             showResult(ui, spec, out, record.id);
@@ -1860,6 +1947,7 @@
     /* ------------------------------------------------------------------ */
 
     setMode('edit');
+    fillRatios();
     updateFormatUI();
     renderPreviews();
     renderHistory()

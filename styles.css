@@ -317,6 +317,9 @@ input[type="range"] {
 
 .seg.is-off { opacity: .45; }
 
+.model-seg { margin: 24px 0 0; }
+.model-seg + .tabs { margin-top: 12px; }
+
 /* ---------- Vorschau-Raster ---------- */
 
 .preview-grid {
