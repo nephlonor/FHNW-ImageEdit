@@ -23,7 +23,11 @@ Bildeditor für Studierende der FHNW – läuft vollständig im Browser und spri
 
 Beim Wechsel **Edit → Inpaint** wird das erste Bild zum Basisbild, beim Wechsel
 **Inpaint → Edit** wandert das Basisbild als erstes Referenzbild zurück. Hin und
-zurück bleibt die gemalte Maske erhalten.
+zurück bleibt die gemalte Maske erhalten, und ein 4K-Bild bleibt 4K.
+
+**Als Quelle** (Verlauf) bzw. **Als Quellbild übernehmen** (Ergebniskarte) macht
+im Edit-Modus das Bild zum ersten Bild, im Inpaint-Modus fügt es eine weitere
+Referenz hinzu – das Basisbild bleibt.
 
 ## Wie das Inpaint arbeitet
 
@@ -37,10 +41,12 @@ Wie im Referenz-Projekt [NanoBanana](https://nephlonor.github.io/NanoBanana/):
    Maskenkante mit dem Original zusammengesetzt. Ausserhalb der Markierung ist
    das Ergebnis damit pixelgenau das Original – unabhängig davon, was das Modell
    zurückgibt. Zusammengesetzt wird über die verlustfreie Bildquelle, nicht über
-   die für die API komprimierte Fassung – allerdings in Arbeitsgrösse
-   (max. 2048 px Kante), nicht aus dem Originalbild der Kamera: das noch einmal
-   zu dekodieren kostete auf Mobilgeräten ein Vielfaches an Speicher, ohne am
-   Ergebnis etwas zu ändern. Die Zeichenflächen werden direkt nach dem
+   die für die API komprimierte Fassung, und zwar in der **Auflösung des
+   Basisbilds bis 4K** (4096 px Kante): ein 4K-Bild bleibt 4K und ausserhalb der
+   Maske pixelgenau. Gemalt und an die API geschickt wird in Arbeitsgrösse
+   (max. 2048 px); das Modellergebnis wird für den bearbeiteten Bereich auf die
+   volle Grösse gebracht. Nano Banana liefert diesen Bereich bei einem
+   Ergebnis über 2K direkt in 4K. Die Zeichenflächen werden direkt nach dem
    Zusammensetzen freigegeben.
 
 Der Regler **Kante** (0–10, Standard 10) zeigt die Weichheit direkt in der
@@ -194,7 +200,10 @@ einzeln übernommen.
 * Der API-Key wird ausschliesslich im `localStorage` des Browsers abgelegt und
   nur an `queue.fal.run` gesendet. Jede Person nutzt ihr eigenes Kontingent.
 * Eingabebilder werden vor dem Versand auf max. 2048 px lange Kante skaliert und
-  als Data-URI übertragen.
+  als Data-URI übertragen – egal, ob hochgeladen, aus einem Ergebnis übernommen
+  oder beim Moduswechsel weitergereicht. Ohne Transparenz als JPEG, mit
+  Transparenz als PNG (sonst bekäme eine freigestellte Figur schwarzen Grund).
+  Ein 4K-Ergebnis als PNG hat sonst schnell 15–20 MB und sprengt die Anfrage.
 * Deployment über GitHub Actions (`.github/workflows/pages.yml`) auf GitHub Pages.
 
 ## Lokal starten
