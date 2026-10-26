@@ -64,13 +64,19 @@ Generierung – und damit ohne Kosten – weiter justieren:
 
 * **Kante** auf der Ergebniskarte – setzt live mit anderer Kantenweichheit neu
   zusammen.
-* **Maske im Editor öffnen** – legt Basisbild, Maske und Kantenwert zurück in
-  den Editor.
-* **Aus Editor übernehmen** – nimmt die dort überarbeitete Maske und setzt das
-  gespeicherte Ergebnis damit neu zusammen.
+* **Maske bearbeiten** – öffnet das fertige, bereits zusammengesetzte Bild in
+  einem eigenen Fenster mit denselben Werkzeugen wie der Editor (Pinsel,
+  Radierer, Zurück, Leeren, Pinselgrösse, Kante). Solange gemalt oder radiert
+  wird, ist die bestehende Maske sichtbar und lässt sich ergänzen; beim
+  Loslassen wird sofort neu zusammengesetzt. Darunter **Herunterladen** (das
+  aktuelle Ergebnis in voller Auflösung) und **Fertig**, das die Änderung auf
+  die Ergebniskarte und in den Verlauf übernimmt (auch mit Esc). Die Vorschau im
+  Fenster rechnet in Bildschirmgrösse, Fertig und Herunterladen in voller
+  Auflösung.
 
-Aus dem Verlauf führt **Maske anpassen** denselben Weg. Die dafür nötigen Daten
-werden für die 12 neuesten Einträge aufbewahrt.
+Aus dem Verlauf öffnet **Maske bearbeiten** dasselbe Fenster. Steht die
+zugehörige Ergebniskarte noch auf der Seite, wird sie mit aktualisiert. Die dafür
+nötigen Daten werden für die 12 neuesten Einträge aufbewahrt.
 
 ## Modell
 
@@ -132,7 +138,7 @@ Ergebnisse landen mit Vorschaubild, Prompt und Zeitstempel in einem lokalen
 IndexedDB-Verlauf (max. 60 Einträge). Ein Tippen auf den Prompt kopiert ihn in
 die Zwischenablage. Von dort lassen sie sich als neues
 Quellbild übernehmen, im Inpaint-Editor weiterbearbeiten oder – bei
-Inpaint-Ergebnissen – über *Maske anpassen* neu zusammensetzen. Zum Speichern
+Inpaint-Ergebnissen – über *Maske bearbeiten* neu zusammensetzen. Zum Speichern
 das Vorschaubild antippen und im Grossbild per Rechtsklick bzw. langem Tippen
 sichern.
 
@@ -147,7 +153,7 @@ Der Verlauf liegt in drei Stores, damit die Liste nie die Bilder selbst lädt:
 |---|---|---|
 | `entries` | Prompt, Zeit, Modus, Stufe, Vorschaubild (≈ 20–40 KB) | beim Zeichnen der Liste |
 | `images` | das Ergebnisbild | beim Antippen, *Als Quelle*, *Inpaint* |
-| `tunes` | Basisbild, Maske, Rohergebnis fürs Nachjustieren | bei *Maske anpassen* |
+| `tunes` | Basisbild, Maske, Rohergebnis fürs Nachjustieren | bei *Maske bearbeiten* |
 
 Früher lag alles in einem Datensatz, und jedes Neuzeichnen der Liste hat den
 ganzen Verlauf samt aller Bilder in den Speicher geholt – nach jedem fertigen
