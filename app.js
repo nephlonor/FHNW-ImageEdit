@@ -57,9 +57,9 @@
     var TIER_PX = { '2K': 2048, '4K': 4096 };
 
     // Grössen, die GPT Image annimmt: Kanten in 16er-Schritten, max. 3840 px,
-    // 0,65–8,3 Megapixel, höchstens 3:1. Dokumentiert ist das nur bei
-    // Text-to-Image, gilt aber auch für Edit (gleiches Modell): ein grösserer
-    // Wunsch wie 4096 × 4096 wird dort still ignoriert und liefert nur ~3 MP.
+    // 0,65–8,3 Megapixel, höchstens 3:1. Dokumentiert ist das bei
+    // Text-to-Image; Edit läuft auf demselben Modell und bekommt dieselben
+    // Grenzen, statt z. B. 4096 × 4096 anzufragen.
     var GPT_MAX_EDGE = 3840;
     var GPT_MAX_PX = 8294400;
     var GPT_MIN_PX = 655360;
@@ -183,8 +183,10 @@
         });
     }
 
-    function thumbnail(src, size) {
+    // dims (optional) bekommt die Grösse des Bilds, das ohnehin geladen wird.
+    function thumbnail(src, size, dims) {
         return loadImage(src).then(function (img) {
+            if (dims) { dims.w = img.naturalWidth; dims.h = img.naturalHeight; }
             var s = size || 300;
             var c = document.createElement('canvas');
             c.width = s; c.height = s;
@@ -1315,7 +1317,8 @@
         head.appendChild(el('span', null, spec.formatLabel));
         if (spec.model === 'nano') head.appendChild(el('span', 'job-quality', NANO_LABEL));
         else if (qualityLabel(spec.quality)) head.appendChild(el('span', 'job-quality', qualityLabel(spec.quality)));
-        head.appendChild(el('span', 'job-spacer'));
+        var spacer = el('span', 'job-spacer');
+        head.appendChild(spacer);
         var status = el('span', 'job-status', 'Wird gesendet …');
         head.appendChild(status);
         card.appendChild(head);
@@ -1348,6 +1351,11 @@
         return {
             card: card,
             setStatus: function (t) { status.textContent = t; },
+            // Was tatsächlich zurückkam – kleiner als angefordert wird markiert.
+            setSize: function (text, short) {
+                var s = el('span', 'job-size' + (short ? ' is-short' : ''), text);
+                head.insertBefore(s, spacer);
+            },
             stopBar: function () { bar.remove(); },
             dismissible: makeDismissible,
             actions: actions,
@@ -1391,12 +1399,35 @@
 
     // result: { dataUrl, remote, raw }  – raw ist die unveränderte Modellausgabe,
     // sie wird für das nachträgliche Anpassen von Maske und Kante gebraucht.
+    function sizeText(w, h) {
+        var mp = (w * h / 1e6).toLocaleString('de-CH', { minimumFractionDigits: 1, maximumFractionDigits: 1 });
+        return w + ' × ' + h + ' px · ' + mp + ' MP';
+    }
+
+    // Längere Kante, die angefordert wurde – 0, wenn das Modell sie wählt.
+    function expectedEdge(spec) {
+        if (spec.imageSize && spec.imageSize.width) return Math.max(spec.imageSize.width, spec.imageSize.height);
+        if (spec.model === 'nano') return TIER_PX[spec.tier] || 0;
+        return 0;
+    }
+
     function showResult(ui, spec, result, historyId) {
         ui.stopBar();
         ui.setStatus(ui.statusText || 'Fertig');
         ui.dismissible();
 
         var img = el('img', 'job-img');
+        // Inpaint hat die Grösse schon im Kopf (Basisbild), sonst zeigen, was kam.
+        if (spec.mode !== 'inpaint') {
+            img.addEventListener('load', function onSize() {
+                img.removeEventListener('load', onSize);
+                var w = img.naturalWidth, h = img.naturalHeight;
+                if (!w) return;
+                var want = expectedEdge(spec);
+                var short = want > 0 && Math.max(w, h) < want * 0.9;
+                ui.setSize(sizeText(w, h) + (short ? ' – kleiner als angefordert' : ''), short);
+            });
+        }
         img.src = result.dataUrl || result.remote;
         img.alt = spec.prompt || 'Ergebnis';
         img.addEventListener('click', function () { openLightbox(img.src); });
@@ -2063,7 +2094,7 @@
         });
     }
 
-    function entryOf(rec, thumb) {
+    function entryOf(rec, thumb, dims) {
         return {
             id: rec.id,
             ts: rec.ts,
@@ -2071,6 +2102,8 @@
             prompt: rec.prompt,
             format: rec.format,
             quality: rec.quality,
+            w: (dims && dims.w) || rec.w || null,
+            h: (dims && dims.h) || rec.h || null,
             // Ältere Fassungen haben bei einem Fehler das volle Bild als
             // Vorschau abgelegt – das gehört nicht in den leichten Store.
             thumb: thumb && thumb.length <= THUMB_MAX ? thumb : null,
@@ -2079,9 +2112,10 @@
     }
 
     function addHistory(rec) {
-        return thumbnail(rec.dataUrl, 320).then(function (thumb) {
+        var dims = {};
+        return thumbnail(rec.dataUrl, 320, dims).then(function (thumb) {
             return run([ENTRIES, IMAGES, TUNES], 'readwrite', function (store) {
-                store(ENTRIES).put(entryOf(rec, thumb));
+                store(ENTRIES).put(entryOf(rec, thumb, dims));
                 store(IMAGES).put({ id: rec.id, dataUrl: rec.dataUrl });
                 if (rec.tune) store(TUNES).put({ id: rec.id, tune: rec.tune });
             });
@@ -2278,7 +2312,8 @@
                 img.loading = 'lazy';
                 img.setAttribute('data-id', item.id);
                 if (item.thumb) img.src = item.thumb;
-                else missing.push({ item: item });
+                // Ältere Einträge kennen ihre Grösse noch nicht – einmal nachmessen.
+                if (!item.thumb || (!item.w && !item.noSize)) missing.push({ item: item });
                 img.addEventListener('click', function () { withImage(item, openLightbox); });
                 box.appendChild(img);
 
@@ -2288,6 +2323,7 @@
                 // Ältere Einträge kennen die Stufe noch nicht.
                 if (qualityLabel(item.quality)) line += ' · ' + qualityLabel(item.quality);
                 meta.appendChild(el('div', null, line));
+                if (item.w && item.h) meta.appendChild(histSize(item));
 
                 var acts = el('div', 'hist-actions');
                 var reuse = el('button', null, 'Als Quelle');
@@ -2331,8 +2367,12 @@
         });
     }
 
-    // Fehlende Vorschaubilder nachbauen – nacheinander, damit nie mehr als ein
-    // volles Bild gleichzeitig im Speicher liegt.
+    function histSize(item) {
+        return el('div', 'hist-size', sizeText(item.w, item.h));
+    }
+
+    // Fehlende Vorschaubilder und Grössen nachtragen – nacheinander, damit nie
+    // mehr als ein volles Bild gleichzeitig im Speicher liegt.
     var healing = {};
 
     function healThumbs(list) {
@@ -2340,16 +2380,29 @@
         list.forEach(function (entry) { healing[entry.item.id] = true; });
         list.reduce(function (chain, entry) {
             return chain.then(function () {
-                return loadImageData(entry.item.id).then(function (url) {
-                    return url ? thumbnail(url, 320) : null;
+                var item = entry.item, dims = {};
+                return loadImageData(item.id).then(function (url) {
+                    if (!url) return null;
+                    if (!item.thumb) return thumbnail(url, 320, dims);
+                    return loadImage(url).then(function (img) {
+                        dims.w = img.naturalWidth; dims.h = img.naturalHeight;
+                        return null;
+                    });
                 }).then(function (thumb) {
-                    if (!thumb || thumb.length > THUMB_MAX) return;
+                    if (thumb && thumb.length > THUMB_MAX) thumb = null;
+                    if (thumb) item.thumb = thumb;
+                    if (dims.w) { item.w = dims.w; item.h = dims.h; }
+                    else item.noSize = true;   // nicht bei jedem Öffnen erneut versuchen
                     // Die Liste kann inzwischen neu gezeichnet worden sein.
                     $$('#historyGrid img').forEach(function (im) {
-                        if (im.getAttribute('data-id') === entry.item.id) im.src = thumb;
+                        if (im.getAttribute('data-id') !== item.id) return;
+                        if (thumb) im.src = thumb;
+                        var meta = im.parentNode.querySelector('.hist-meta');
+                        if (dims.w && meta && !meta.querySelector('.hist-size')) {
+                            meta.insertBefore(histSize(item), meta.querySelector('.hist-actions'));
+                        }
                     });
-                    entry.item.thumb = thumb;
-                    return run([ENTRIES], 'readwrite', function (store) { store(ENTRIES).put(entry.item); });
+                    return run([ENTRIES], 'readwrite', function (store) { store(ENTRIES).put(item); });
                 }).catch(function (e) {
                     console.warn('Vorschaubild fehlt:', e);
                 }).then(function () { delete healing[entry.item.id]; });
