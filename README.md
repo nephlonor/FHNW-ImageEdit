@@ -180,7 +180,15 @@ die Zwischenablage. Von dort lassen sie sich als neues
 Quellbild übernehmen, im Inpaint-Editor weiterbearbeiten oder – bei
 Inpaint-Ergebnissen – über *Maske bearbeiten* neu zusammensetzen. Zum Speichern
 das Vorschaubild antippen und im Grossbild per Rechtsklick bzw. langem Tippen
-sichern.
+sichern, oder dort **Herunterladen** drücken.
+
+**Herunterladen** (Ergebniskarte, Grossbild, *Maske bearbeiten*) öffnet auf
+Touch-Geräten das Teilen-Menü mit der Bilddatei in voller Auflösung – dort
+„Bild sichern“ wählen. Auf dem iPhone liess sich ein 4K-Ergebnis (z. B. 17 MP
+von Nano Banana) sonst weder herunterladen noch per langem Tippen sichern. Am
+Computer wird die Datei direkt heruntergeladen. *Als Quellbild übernehmen*
+verkleinert dagegen bewusst auf 2048 px (rund 3 MP), weil das die Grösse ist,
+mit der Bilder an die API gehen – zum Sichern ist das nicht gedacht.
 
 Eine fertige Ergebniskarte lässt sich über **Fertig** oben rechts schliessen –
 das Bild bleibt im Verlauf.
