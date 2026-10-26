@@ -48,6 +48,7 @@
     var QUALITY_STORAGE = 'fhnw.imageeditor.quality';
 
     var MAX_INPUT_EDGE = 2048;   // Kantenlänge, mit der Bilder hochgeladen werden
+    var MAX_RESULT_EDGE = 4096;  // Inpaint-Ergebnis: in der Auflösung des Basisbilds, bis 4K
     var MAX_REFS = 8;            // Quell-/Referenzbilder pro Generierung
     var MAX_PAYLOAD_MB = 14;     // Sicherheitsnetz gegen zu grosse Requests
     var POLL_MS = 1600;
@@ -154,6 +155,32 @@
         });
     }
 
+    // Ein Referenzbild so, wie es an die API geht: höchstens 2048 px. Ohne
+    // Transparenz als JPEG, mit Transparenz als PNG – sonst würde aus einer
+    // freigestellten Figur eine auf schwarzem Grund. Ein 4K-Ergebnis als PNG hat
+    // schnell 15–20 MB und hat die Anfrage gesprengt.
+    function prepareRef(src) {
+        return loadImage(src).then(function (img) {
+            var scale = Math.min(1, MAX_INPUT_EDGE / Math.max(img.width, img.height));
+            if (scale === 1 && src.length < 1200000) {
+                return { dataUrl: src, w: img.width, h: img.height };
+            }
+            var w = Math.max(1, Math.round(img.width * scale));
+            var h = Math.max(1, Math.round(img.height * scale));
+            var c = document.createElement('canvas');
+            c.width = w; c.height = h;
+            var ctx = c.getContext('2d', { willReadFrequently: true });
+            ctx.imageSmoothingQuality = 'high';
+            ctx.drawImage(img, 0, 0, w, h);
+            var d = ctx.getImageData(0, 0, w, h).data;
+            var transparent = false;
+            for (var i = 3; i < d.length; i += 4) { if (d[i] < 255) { transparent = true; break; } }
+            var url = transparent ? c.toDataURL('image/png') : c.toDataURL('image/jpeg', 0.92);
+            releaseCanvas(c);
+            return { dataUrl: url, w: w, h: h };
+        });
+    }
+
     function thumbnail(src, size) {
         return loadImage(src).then(function (img) {
             var s = size || 300;
@@ -193,7 +220,7 @@
     // Sehr grosse Originale nicht in voller Grösse in den Verlauf schreiben.
     function boundedBase(src) {
         if (approxBytes(src) <= 2 * 1024 * 1024) return Promise.resolve(src);
-        return shrink(src, MAX_INPUT_EDGE, 'image/jpeg', 0.95)
+        return shrink(src, MAX_RESULT_EDGE, 'image/jpeg', 0.95)
             .then(function (o) { return o.dataUrl; })
             .catch(function () { return src; });
     }
@@ -331,15 +358,18 @@
     function setMode(next, handoff) {
         if (next !== mode && handoff !== false) {
             if (next === 'inpaint') {
-                // Edit → Inpaint: das erste Bild wird zum Basisbild.
+                // Edit → Inpaint: das erste Bild wird zum Basisbild – aus dem
+                // Original, damit ein 4K-Bild nicht als 2K weitergeht.
                 var first = refs.length ? refs.shift() : null;
-                if (first && first.dataUrl !== baseSrc) {
-                    loadBase(first.dataUrl).catch(function (err) { console.warn(err); });
+                var firstSrc = first && (first.source || first.dataUrl);
+                if (first && firstSrc !== baseOriginal) {
+                    loadBase(firstSrc).catch(function (err) { console.warn(err); });
                 }
-            } else if (baseSrc) {
-                // Inpaint → Edit: Basisbild wird zum ersten Referenzbild.
+            } else if (baseUrl) {
+                // Inpaint → Edit: Basisbild wird zum ersten Referenzbild, für die
+                // API in Arbeitsgrösse, das Original bleibt für den Rückweg.
                 if (refs.length >= MAX_REFS) refs.pop();
-                refs.unshift({ id: uid(), dataUrl: baseSrc, name: 'Basisbild' });
+                refs.unshift({ id: uid(), dataUrl: baseUrl, w: baseW, h: baseH, source: baseOriginal, name: 'Basisbild' });
             }
         }
         mode = next;
@@ -400,10 +430,11 @@
             chain = chain.then(function () {
                 if (refs.length >= MAX_REFS) return;
                 return fileToDataUrl(file)
-                    .then(function (raw) { return shrink(raw, MAX_INPUT_EDGE, 'image/jpeg', 0.92); })
-                    .then(function (out) {
-                        refs.push({ id: uid(), dataUrl: out.dataUrl, w: out.w, h: out.h, name: file.name });
-                        renderPreviews();
+                    .then(function (raw) {
+                        return prepareRef(raw).then(function (out) {
+                            refs.push({ id: uid(), dataUrl: out.dataUrl, w: out.w, h: out.h, source: raw, name: file.name });
+                            renderPreviews();
+                        });
                     })
                     .catch(function (err) { console.warn('Upload fehlgeschlagen:', err); });
             });
@@ -560,6 +591,8 @@
     var baseUrl = null;      // Basisbild als JPEG-Data-URL (exakt baseW × baseH)
     var baseSrc = null;      // Quelle, aus der das Basisbild geladen wurde
     var baseW = 0, baseH = 0;
+    var resultW = 0, resultH = 0;   // Grösse des Inpaint-Ergebnisses (bis 4K)
+    var baseOriginal = null;        // das Bild, aus dem das Basisbild geladen wurde
     var brushMode = 'brush';
 
     function maskCtx() { return maskCanvas.getContext('2d', { willReadFrequently: true }); }
@@ -600,11 +633,25 @@
             maskCtx().clearRect(0, 0, baseW, baseH);
             editorPainter.resetUndo();
             baseUrl = baseCanvas.toDataURL('image/jpeg', 0.94);
-            // Verlustfreie Quelle fürs Zusammensetzen – aber in Arbeitsgrösse.
-            // Das Original einer Handykamera hat schnell 12 Megapixel; es beim
-            // Zusammensetzen noch einmal zu dekodieren hat auf Mobilgeräten den
-            // Tab gesprengt, und gezeichnet wird ohnehin in baseW × baseH.
-            baseSrc = scale < 1 ? baseCanvas.toDataURL('image/png') : src;
+
+            // Gemalt und an die API geschickt wird in Arbeitsgrösse (max. 2048 px),
+            // zusammengesetzt aber in der Auflösung des Basisbilds bis 4K: ein
+            // 4K-Bild bleibt ausserhalb der Maske pixelgenau 4K.
+            var big = Math.min(1, MAX_RESULT_EDGE / Math.max(img.width, img.height));
+            resultW = Math.max(1, Math.round(img.width * big));
+            resultH = Math.max(1, Math.round(img.height * big));
+            baseOriginal = src;
+            if (big < 1) {
+                var full = document.createElement('canvas');
+                full.width = resultW; full.height = resultH;
+                var fctx = full.getContext('2d');
+                fctx.imageSmoothingQuality = 'high';
+                fctx.drawImage(img, 0, 0, resultW, resultH);
+                baseSrc = full.toDataURL('image/png');
+                releaseCanvas(full);
+            } else {
+                baseSrc = src;
+            }
             inpaintStage.classList.remove('hidden');
             inpaintTools.classList.remove('hidden');
             renderMaskView();
@@ -1325,12 +1372,17 @@
         return b;
     }
 
+    // „Als Quellbild übernehmen“ / „Als Quelle“: im Edit-Modus wird es das erste
+    // Bild, im Inpaint-Modus eine weitere Referenz – das Basisbild bleibt.
     function useAsSource(url) {
-        setMode('edit');
-        if (refs.length >= MAX_REFS) refs.pop();
-        refs.unshift({ id: uid(), dataUrl: url, name: 'Ergebnis' });
-        renderPreviews();
-        previewGrid.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        return prepareRef(url).then(function (out) {
+            var item = { id: uid(), dataUrl: out.dataUrl, w: out.w, h: out.h, source: url, name: 'Ergebnis' };
+            if (refs.length >= MAX_REFS) refs.pop();
+            if (mode === 'inpaint') refs.push(item);
+            else refs.unshift(item);
+            renderPreviews();
+            previewGrid.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        }).catch(function (e) { alert('Bild konnte nicht übernommen werden: ' + e.message); });
     }
 
     function openInInpaint(url) {
@@ -1568,11 +1620,13 @@
             var w = target.inpaint.w, h = target.inpaint.h;
             tuneSession = { target: target, res: imgs[0], base: imgs[1], w: w, h: h, version: 0, cache: null, busy: false };
 
-            tuneMask.width = w;
-            tuneMask.height = h;
+            // Die Maske bleibt in ihrer Arbeitsgrösse, das Ergebnis hat volle Grösse.
+            var ov = imgs[2];
+            tuneMask.width = ov.naturalWidth || ov.width;
+            tuneMask.height = ov.naturalHeight || ov.height;
             var mctx = tuneMask.getContext('2d', { willReadFrequently: true });
-            mctx.clearRect(0, 0, w, h);
-            mctx.drawImage(imgs[2], 0, 0, w, h);
+            mctx.clearRect(0, 0, tuneMask.width, tuneMask.height);
+            mctx.drawImage(ov, 0, 0);
             tunePainter.resetUndo();
 
             var p = Math.min(1, PREVIEW_EDGE / Math.max(w, h));
@@ -1722,7 +1776,7 @@
             spec.images = [baseUrl, buildMarkedImage()].concat(refs.map(function (r) { return r.dataUrl; }));
             spec.apiPrompt = inpaintPrompt(promptText, refs.length);
             spec.imageSize = 'auto';
-            spec.formatLabel = baseW + ' × ' + baseH + ' px';
+            spec.formatLabel = resultW + ' × ' + resultH + ' px';
             if (isNano()) spec.endpoint = NANO_QUEUE_URL;
             spec.composite = true;
             spec.inpaint = {
@@ -1730,8 +1784,8 @@
                 // das für die API komprimierte Basisbild.
                 base: baseSrc,
                 overlay: maskCanvas.toDataURL('image/png'),
-                w: baseW,
-                h: baseH,
+                w: resultW,
+                h: resultH,
                 feather: feather()
             };
         } else if (!refs.length) {
@@ -1808,10 +1862,12 @@
         if (spec.model === 'nano') {
             payload = {
                 prompt: spec.apiPrompt || spec.prompt,
-                // Inpaint: Ausgabe folgt dem Basisbild, zusammengesetzt wird ohnehin
-                // in Arbeitsgrösse (max. 2048 px) – 2K genügt.
+                // Inpaint: Ausgabe folgt dem Basisbild; ist das Ergebnis grösser
+                // als 2K, liefert Nano Banana auch den bearbeiteten Bereich in 4K.
                 aspect_ratio: spec.mode === 'inpaint' ? 'auto' : spec.ratio,
-                resolution: spec.mode === 'inpaint' ? '2K' : spec.tier,
+                resolution: spec.mode === 'inpaint'
+                    ? (Math.max(spec.inpaint.w, spec.inpaint.h) > 2048 ? '4K' : '2K')
+                    : spec.tier,
                 safety_tolerance: NANO_SAFETY,
                 num_images: 1,
                 output_format: REQ_FORMAT
