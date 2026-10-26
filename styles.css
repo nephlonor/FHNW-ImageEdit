@@ -570,6 +570,9 @@ input[type="range"] {
     color: var(--muted);
 }
 
+.job-size { color: var(--text); }
+.job-size.is-short { color: var(--danger); }
+
 .job-spacer { flex: 1; }
 
 .job-prompt {
@@ -715,6 +718,8 @@ input[type="range"] {
     font-size: 11px;
     color: var(--muted);
 }
+
+.hist-size { margin-top: 2px; }
 
 .hist-prompt {
     display: -webkit-box;

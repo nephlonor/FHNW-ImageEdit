@@ -138,12 +138,17 @@ kein AUTO, weil nichts abzuleiten ist – es gilt dann **3:2**.
 
 GPT Image nimmt nur Grössen innerhalb dieser Grenzen an: Kanten in
 16er-Schritten, max. 3840 px, 0,65–8,3 Megapixel, höchstens 3:1. Dokumentiert
-sind sie nur beim Text-to-Image-Endpunkt, sie gelten aber auch für Edit – ein
-grösserer Wunsch wie 4096 × 4096 wird dort still ignoriert, und das Modell
-liefert dann nur rund 3 MP (weniger als bei 2K). Die gewählte Grösse wird daher
-bei Edit und Text-to-Image auf diese Grenzen eingepasst: 4K bedeutet je nach
+sind sie beim Text-to-Image-Endpunkt; Edit läuft auf demselben Modell, deshalb
+wird die gewählte Grösse bei Edit und Text-to-Image auf diese Grenzen
+eingepasst, statt z. B. 4096 × 4096 anzufragen: 4K bedeutet bei GPT je nach
 Seitenverhältnis bis zu 3840 px lange Kante, ein Quadrat höchstens 2880 × 2880
 (8,3 MP); 2K bleibt unverändert (z. B. 2048 × 2048 oder 2048 × 1152).
+
+Jede Ergebnis-Karte zeigt, was tatsächlich zurückkam (z. B. „4096 × 4096 px ·
+16.8 MP“), der Verlauf ebenso – ältere Einträge werden einmal nachgemessen.
+Liefert das Modell deutlich weniger als angefordert (längere Kante unter 90 %
+von 2K/4K bzw. der GPT-Grösse), steht die Angabe rot mit „kleiner als
+angefordert“.
 
 ## Qualität
 
