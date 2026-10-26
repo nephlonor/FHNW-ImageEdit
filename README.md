@@ -119,7 +119,8 @@ bleibt, wie er ist.
 
 * **Festes Seitenverhältnis** – von 1:3 bis 3:1 (1:3, 9:21, 1:2, 9:16, 2:3, 3:4,
   4:5, 1:1, 5:4, 4:3, 3:2, 16:9, 2:1, 21:9, 3:1). Die längere Kante beträgt je
-  nach Schalter **2K** (2048 px) oder **4K** (4096 px).
+  nach Schalter **2K** (2048 px) oder **4K** (4096 px) – bei GPT Image
+  eingepasst in dessen Grenzen (siehe unten).
 * Sobald ein Bild dazukommt, wird das passendste Seitenverhältnis **automatisch
   gewählt** – auch über AUTO hinweg. Damit steht die Auflösung fest, statt vom
   Modell zu kommen. Massgebend ist immer das erste Bild; weitere Bilder ändern
@@ -133,10 +134,16 @@ bleibt, wie er ist.
 
 Ohne Eingabebild geht die Anfrage an
 `openai/gpt-image-2.5/sunburst/text-to-image` statt an `…/edit`. Dort gibt es
-kein AUTO, weil nichts abzuleiten ist – es gilt dann **3:2**. Die Grenzen dieses
-Endpunkts sind enger (Kanten in 16er-Schritten, max. 3840 px, 0,65–8,3
-Megapixel), die gewählte Grösse wird darauf eingepasst: 4K bedeutet hier je nach
-Seitenverhältnis bis zu 3840 px lange Kante, ein Quadrat höchstens 2880 × 2880.
+kein AUTO, weil nichts abzuleiten ist – es gilt dann **3:2**.
+
+GPT Image nimmt nur Grössen innerhalb dieser Grenzen an: Kanten in
+16er-Schritten, max. 3840 px, 0,65–8,3 Megapixel, höchstens 3:1. Dokumentiert
+sind sie nur beim Text-to-Image-Endpunkt, sie gelten aber auch für Edit – ein
+grösserer Wunsch wie 4096 × 4096 wird dort still ignoriert, und das Modell
+liefert dann nur rund 3 MP (weniger als bei 2K). Die gewählte Grösse wird daher
+bei Edit und Text-to-Image auf diese Grenzen eingepasst: 4K bedeutet je nach
+Seitenverhältnis bis zu 3840 px lange Kante, ein Quadrat höchstens 2880 × 2880
+(8,3 MP); 2K bleibt unverändert (z. B. 2048 × 2048 oder 2048 × 1152).
 
 ## Qualität
 
