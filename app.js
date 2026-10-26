@@ -1139,11 +1139,32 @@
     /* fal.ai Queue                                                        */
     /* ------------------------------------------------------------------ */
 
+    // fals Inhaltsprüfung: categories sagt, was beanstandet wurde, und
+    // 'model_moderated' darin, dass die Moderation des Modells selbst (OpenAI
+    // bzw. Google) abgelehnt hat – ohne diesen Eintrag war es fals Filter.
+    function contentPolicyText(d) {
+        var cats = Array.isArray(d.categories) ? d.categories : [];
+        var labels = cats.filter(function (c) { return c !== 'model_moderated'; });
+        var field = d.loc && d.loc.length ? String(d.loc[d.loc.length - 1]) : '';
+        var text = 'Vom Inhaltsfilter abgelehnt';
+        if (field === 'prompt') text += ' (Prompt)';
+        else if (/image/.test(field)) text += ' (Bild)';
+        if (labels.length) text += ' – ' + labels.join(', ');
+        if (cats.length) text += ' · geprüft von ' + (cats.indexOf('model_moderated') >= 0 ? 'der Moderation des Modells' : 'fal');
+        return text + '.';
+    }
+
+    function isContentPolicy(body) {
+        var detail = body && body.detail;
+        return Array.isArray(detail) && detail.some(function (d) { return d && d.type === 'content_policy_violation'; });
+    }
+
     function errorText(res, body) {
         var detail = body && body.detail;
         if (typeof detail === 'string') return detail;
         if (Array.isArray(detail) && detail.length) {
             return detail.map(function (d) {
+                if (d && d.type === 'content_policy_violation') return contentPolicyText(d);
                 return (d.loc ? d.loc.join('.') + ': ' : '') + (d.msg || JSON.stringify(d));
             }).join(' | ');
         }
@@ -1162,6 +1183,7 @@
             if (!body && txt) msg += ' – ' + txt.slice(0, 200);
             var err = new Error(msg);
             err.status = res.status;
+            err.contentPolicy = isContentPolicy(body);
             return err;
         });
     }
@@ -1183,7 +1205,8 @@
     // kommen erst später und lösen keinen zweiten Versuch aus.
     function submitWithFallback(payload, key, endpoint) {
         return falSubmit(payload, key, endpoint).catch(function (err) {
-            var rejected = err && (err.status === 400 || err.status === 403 || err.status === 422);
+            var rejected = err && !err.contentPolicy &&
+                (err.status === 400 || err.status === 403 || err.status === 422);
             if (!rejected || payload.enable_safety_checker !== false) throw err;
             console.warn('fal hat enable_safety_checker=false abgelehnt (' + err.message + ') – Anfrage geht ohne den Parameter neu raus.');
             var retry = {};
