@@ -21,6 +21,10 @@
     var QUALITY_LABELS = ['low', 'medium', 'high', 'high+'];
     var REQ_FORMAT = 'png';
 
+    var MASK_COLOR = '#ffd500';       // Farbe der gemalten Maske
+    var MASK_RGB = [255, 213, 0];     // dieselbe Farbe als Zahlen
+    var UNDO_MAX = 20;                // Schritte für „Zurück“
+
     // Nano Banana 2.1 (Google) als zweites Modell. Nur 2K und 4K, Moderation
     // auf der lockersten Stufe (6). Kein Qualitätsregler, kein transparenter
     // Hintergrund.
@@ -426,6 +430,112 @@
     })();
 
     /* ------------------------------------------------------------------ */
+    /* Maske malen                                                         */
+    /* ------------------------------------------------------------------ */
+
+    // Pinsel, Radierer, Zurück und Leeren auf einer Maske – vom Editor und vom
+    // Fenster „Maske bearbeiten“ gemeinsam genutzt.
+    //   view      Fläche, auf der gemalt wird (Grösse = angezeigtes Bild)
+    //   mask()    Canvas der harten Maske in voller Auflösung
+    //   brush()   Pinselgrösse in Bildschirmpixeln
+    //   mode()    'brush' oder 'erase'
+    //   canPaint()
+    //   onStart / onMove / onEnd   Rückmeldungen für die Anzeige
+    function createMaskPainter(o) {
+        var painting = false;
+        var undo = [];
+
+        function ctx() { return o.mask().getContext('2d', { willReadFrequently: true }); }
+
+        // Für „Zurück“ genügt der Alphakanal: ein Viertel des Speichers einer
+        // vollen RGBA-Kopie – bei 20 Schritten in 2048 px rund 60 statt 250 MB.
+        function snapshot() {
+            var m = o.mask();
+            try {
+                var d = ctx().getImageData(0, 0, m.width, m.height).data;
+                var a = new Uint8Array(m.width * m.height);
+                for (var i = 0, j = 3; i < a.length; i++, j += 4) a[i] = d[j];
+                undo.push({ w: m.width, h: m.height, a: a });
+                if (undo.length > UNDO_MAX) undo.shift();
+            } catch (e) { /* ignorieren */ }
+        }
+
+        function restore(snap) {
+            var m = o.mask();
+            if (snap.w !== m.width || snap.h !== m.height) return false;
+            var c = ctx();
+            var img = c.createImageData(snap.w, snap.h);
+            var d = img.data;
+            for (var i = 0, j = 0; i < snap.a.length; i++, j += 4) {
+                if (!snap.a[i]) continue;
+                d[j] = MASK_RGB[0]; d[j + 1] = MASK_RGB[1]; d[j + 2] = MASK_RGB[2]; d[j + 3] = snap.a[i];
+            }
+            c.putImageData(img, 0, 0);
+            return true;
+        }
+
+        function pos(e) {
+            var r = o.view.getBoundingClientRect(), m = o.mask();
+            return {
+                x: (e.clientX - r.left) * (m.width / r.width),
+                y: (e.clientY - r.top) * (m.height / r.height)
+            };
+        }
+
+        o.view.addEventListener('pointerdown', function (e) {
+            if (!o.canPaint()) return;
+            e.preventDefault();
+            try { o.view.setPointerCapture(e.pointerId); } catch (err) { /* egal */ }
+            snapshot();
+            painting = true;
+            var c = ctx(), m = o.mask();
+            var r = o.view.getBoundingClientRect();
+            var lw = o.brush() * (m.width / r.width);
+            c.lineCap = c.lineJoin = 'round';
+            c.lineWidth = lw;
+            c.globalCompositeOperation = o.mode() === 'erase' ? 'destination-out' : 'source-over';
+            c.strokeStyle = c.fillStyle = MASK_COLOR;
+            var p = pos(e);
+            c.beginPath();
+            c.arc(p.x, p.y, lw / 2, 0, Math.PI * 2);
+            c.fill();
+            c.beginPath();
+            c.moveTo(p.x, p.y);
+            if (o.onStart) o.onStart();
+        });
+
+        o.view.addEventListener('pointermove', function (e) {
+            if (!painting) return;
+            e.preventDefault();
+            var p = pos(e), c = ctx();
+            c.lineTo(p.x, p.y);
+            c.stroke();
+            if (o.onMove) o.onMove();
+        });
+
+        function end() {
+            if (!painting) return;
+            painting = false;
+            ctx().globalCompositeOperation = 'source-over';
+            if (o.onEnd) o.onEnd();
+        }
+
+        o.view.addEventListener('pointerup', end);
+        o.view.addEventListener('pointercancel', end);
+        window.addEventListener('pointerup', end);
+
+        return {
+            undo: function () { var snap = undo.pop(); return snap ? restore(snap) : false; },
+            clear: function () {
+                snapshot();
+                var m = o.mask();
+                ctx().clearRect(0, 0, m.width, m.height);
+            },
+            resetUndo: function () { undo.length = 0; }
+        };
+    }
+
+    /* ------------------------------------------------------------------ */
     /* Inpaint-Editor                                                      */
     /* ------------------------------------------------------------------ */
 
@@ -445,8 +555,6 @@
     var baseSrc = null;      // Quelle, aus der das Basisbild geladen wurde
     var baseW = 0, baseH = 0;
     var brushMode = 'brush';
-    var painting = false;
-    var undoStack = [];
 
     function maskCtx() { return maskCanvas.getContext('2d', { willReadFrequently: true }); }
 
@@ -484,7 +592,7 @@
             ctx.imageSmoothingQuality = 'high';
             ctx.drawImage(img, 0, 0, baseW, baseH);
             maskCtx().clearRect(0, 0, baseW, baseH);
-            undoStack.length = 0;
+            editorPainter.resetUndo();
             baseUrl = baseCanvas.toDataURL('image/jpeg', 0.94);
             // Verlustfreie Quelle fürs Zusammensetzen – aber in Arbeitsgrösse.
             // Das Original einer Handykamera hat schnell 12 Megapixel; es beim
@@ -495,22 +603,6 @@
             inpaintTools.classList.remove('hidden');
             renderMaskView();
             updateFormatUI();
-        });
-    }
-
-    // Eine gespeicherte Maske zurück in den Editor legen.
-    function restoreMask(overlayUrl, featherValue) {
-        return loadImage(overlayUrl).then(function (img) {
-            var ctx = maskCtx();
-            ctx.globalCompositeOperation = 'source-over';
-            ctx.clearRect(0, 0, maskCanvas.width, maskCanvas.height);
-            ctx.drawImage(img, 0, 0, maskCanvas.width, maskCanvas.height);
-            undoStack.length = 0;
-            if (typeof featherValue === 'number') {
-                featherRange.value = Math.min(featherValue, FEATHER_MAX);
-                $('#featherOut').textContent = featherRange.value;
-            }
-            renderMaskView();
         });
     }
 
@@ -532,21 +624,23 @@
     $('#brushBtn').addEventListener('click', function () { setBrushMode('brush'); });
     $('#eraseBtn').addEventListener('click', function () { setBrushMode('erase'); });
 
-    function pushUndo() {
-        try {
-            undoStack.push(maskCtx().getImageData(0, 0, maskCanvas.width, maskCanvas.height));
-            if (undoStack.length > 20) undoStack.shift();
-        } catch (e) { /* ignorieren */ }
-    }
+    var editorPainter = createMaskPainter({
+        view: maskView,
+        mask: function () { return maskCanvas; },
+        brush: function () { return parseInt(brushSize.value, 10); },
+        mode: function () { return brushMode; },
+        canPaint: function () { return !!baseUrl; },
+        onStart: scheduleMaskView,
+        onMove: scheduleMaskView,
+        onEnd: renderMaskView
+    });
 
     $('#undoBtn').addEventListener('click', function () {
-        var prev = undoStack.pop();
-        if (prev) { maskCtx().putImageData(prev, 0, 0); renderMaskView(); }
+        if (editorPainter.undo()) renderMaskView();
     });
 
     $('#clearMaskBtn').addEventListener('click', function () {
-        pushUndo();
-        maskCtx().clearRect(0, 0, maskCanvas.width, maskCanvas.height);
+        editorPainter.clear();
         renderMaskView();
     });
 
@@ -555,57 +649,6 @@
         $('#featherOut').textContent = featherRange.value;
         scheduleMaskView();
     });
-
-    function maskPos(e) {
-        var r = maskView.getBoundingClientRect();
-        return {
-            x: (e.clientX - r.left) * (maskCanvas.width / r.width),
-            y: (e.clientY - r.top) * (maskCanvas.height / r.height)
-        };
-    }
-
-    maskView.addEventListener('pointerdown', function (e) {
-        if (!baseUrl) return;
-        e.preventDefault();
-        maskView.setPointerCapture(e.pointerId);
-        pushUndo();
-        painting = true;
-        var ctx = maskCtx();
-        var r = maskView.getBoundingClientRect();
-        var lw = parseInt(brushSize.value, 10) * (maskCanvas.width / r.width);
-        ctx.lineCap = ctx.lineJoin = 'round';
-        ctx.lineWidth = lw;
-        ctx.globalCompositeOperation = brushMode === 'erase' ? 'destination-out' : 'source-over';
-        ctx.strokeStyle = ctx.fillStyle = '#ffd500';
-        var p = maskPos(e);
-        ctx.beginPath();
-        ctx.arc(p.x, p.y, lw / 2, 0, Math.PI * 2);
-        ctx.fill();
-        ctx.beginPath();
-        ctx.moveTo(p.x, p.y);
-        scheduleMaskView();
-    });
-
-    maskView.addEventListener('pointermove', function (e) {
-        if (!painting) return;
-        e.preventDefault();
-        var p = maskPos(e);
-        var ctx = maskCtx();
-        ctx.lineTo(p.x, p.y);
-        ctx.stroke();
-        scheduleMaskView();
-    });
-
-    function endPaint() {
-        if (!painting) return;
-        painting = false;
-        maskCtx().globalCompositeOperation = 'source-over';
-        renderMaskView();
-    }
-
-    maskView.addEventListener('pointerup', endPaint);
-    maskView.addEventListener('pointercancel', endPaint);
-    window.addEventListener('pointerup', endPaint);
 
     function maskIsEmpty() {
         try {
@@ -663,7 +706,6 @@
     // Gerechnet wird verkleinert (eine weiche Kante hat keine feinen Details)
     // und danach glatt hochskaliert.
 
-    var MASK_RGB = [255, 213, 0];   // Farbe des Pinsels (#ffd500)
     // So viele Rechenpixel pro Standardabweichung reichen, damit das
     // Hochskalieren einer weichen Kante glatt bleibt. Eine breite Kante kann
     // deshalb in einem viel kleineren Bild gerechnet werden als eine schmale.
@@ -789,46 +831,62 @@
         });
     }
 
-    // Ergebnis = Modellbild im Maskenbereich, Original ausserhalb.
+    // Ergebnis = Modellbild im Maskenbereich, Original ausserhalb – gerechnet
+    // aus bereits geladenen Bildern, in w × h. Gibt ein Canvas zurück, das der
+    // Aufrufer wieder freigibt. workEdge/samples wie bei featheredMask.
+    function composeInpaint(res, base, mask, w, h, featherValue, workEdge, samples) {
+        var soft = null, clipped = null, out = null;
+        try {
+            soft = featheredMask(mask, w, h, featherValue, workEdge, samples);
+
+            clipped = document.createElement('canvas');
+            clipped.width = w; clipped.height = h;
+            var cctx = clipped.getContext('2d');
+            cctx.drawImage(res, 0, 0, w, h);
+            cctx.globalCompositeOperation = 'destination-in';
+            cctx.drawImage(soft, 0, 0);
+            releaseCanvas(soft); soft = null;
+
+            out = document.createElement('canvas');
+            out.width = w; out.height = h;
+            var octx = out.getContext('2d');
+            octx.drawImage(base, 0, 0, w, h);
+            octx.drawImage(clipped, 0, 0);
+            releaseCanvas(clipped); clipped = null;
+
+            var done = out;
+            out = null;
+            return done;
+        } finally {
+            releaseCanvas(soft);
+            releaseCanvas(clipped);
+            releaseCanvas(out);
+        }
+    }
+
+    // Canvas → PNG-Data-URL; das Canvas wird dabei freigegeben.
+    function canvasToPng(canvas) {
+        var w = canvas.width, h = canvas.height;
+        try {
+            var url = canvas.toDataURL('image/png');
+            // Reicht der Zeichenspeicher nicht, liefern manche Browser
+            // „data:,“ zurück, statt einen Fehler zu werfen.
+            if (!url || url.length < 1024) {
+                throw new Error('Das Bild ist zu gross für diesen Browser (' + w + ' × ' + h + ' px).');
+            }
+            return url;
+        } finally {
+            releaseCanvas(canvas);
+        }
+    }
+
     function compositeInpaint(resultUrl, snap) {
         return Promise.all([
             needImage(resultUrl, 'Das Ergebnis'),
             needImage(snap.base, 'Das Basisbild'),
             needImage(snap.overlay, 'Die Maske')
         ]).then(function (imgs) {
-            var res = imgs[0], base = imgs[1], overlay = imgs[2];
-            var w = snap.w, h = snap.h;
-            var soft = null, clipped = null, out = null;
-            try {
-                soft = featheredMask(overlay, w, h, snap.feather);
-
-                clipped = document.createElement('canvas');
-                clipped.width = w; clipped.height = h;
-                var cctx = clipped.getContext('2d');
-                cctx.drawImage(res, 0, 0, w, h);
-                cctx.globalCompositeOperation = 'destination-in';
-                cctx.drawImage(soft, 0, 0);
-                releaseCanvas(soft); soft = null;
-
-                out = document.createElement('canvas');
-                out.width = w; out.height = h;
-                var octx = out.getContext('2d');
-                octx.drawImage(base, 0, 0, w, h);
-                octx.drawImage(clipped, 0, 0);
-                releaseCanvas(clipped); clipped = null;
-
-                var url = out.toDataURL('image/png');
-                // Reicht der Zeichenspeicher nicht, liefern manche Browser
-                // „data:,“ zurück, statt einen Fehler zu werfen.
-                if (!url || url.length < 1024) {
-                    throw new Error('Das Bild ist zu gross für diesen Browser (' + w + ' × ' + h + ' px).');
-                }
-                return url;
-            } finally {
-                releaseCanvas(soft);
-                releaseCanvas(clipped);
-                releaseCanvas(out);
-            }
+            return canvasToPng(composeInpaint(imgs[0], imgs[1], imgs[2], snap.w, snap.h, snap.feather));
         });
     }
 
@@ -1252,8 +1310,9 @@
         }
     }
 
-    // Nachträgliches Anpassen: Kante live nachregeln oder die Maske im Editor
-    // überarbeiten und das gespeicherte Rohergebnis neu zusammensetzen.
+    // Nachträgliches Anpassen: Kante live nachregeln oder die Maske im Fenster
+    // „Maske bearbeiten“ nachmalen – beides setzt das gespeicherte Rohergebnis
+    // neu zusammen, ohne neue Anfrage.
     function addTuneRow(ui, spec, result, img, historyId) {
         var row = el('div', 'job-tune');
 
@@ -1292,32 +1351,302 @@
             reblend();
         });
 
+        // Für das Fenster „Maske bearbeiten“: liest die Karte, schreibt zurück.
+        function cardTarget() {
+            return {
+                raw: result.raw,
+                current: result.dataUrl,
+                inpaint: spec.inpaint,
+                apply: function (url, overlay, featherValue) {
+                    spec.inpaint.overlay = overlay;
+                    spec.inpaint.feather = featherValue;
+                    result.dataUrl = url;
+                    img.src = url;
+                    slider.value = String(featherValue);
+                    out.textContent = slider.value;
+                    if (historyId) updateHistoryRecord(historyId, url, spec.inpaint);
+                }
+            };
+        }
+        if (historyId) registerTuneCard(historyId, img, cardTarget);
+
         var tools = el('div', 'job-tune-btns');
-
-        addAction(tools, 'Maske im Editor öffnen', function () {
-            setMode('inpaint', false);
-            loadBase(spec.inpaint.base)
-                .then(function () { return restoreMask(spec.inpaint.overlay, spec.inpaint.feather || 0); })
-                .then(function () { inpaintStage.scrollIntoView({ behavior: 'smooth', block: 'center' }); })
-                .catch(function (e) { alert('Maske konnte nicht geladen werden: ' + e.message); });
-        });
-
-        addAction(tools, 'Aus Editor übernehmen', function () {
-            if (baseW !== spec.inpaint.w || baseH !== spec.inpaint.h) {
-                alert('Das Bild im Editor hat eine andere Grösse als dieses Ergebnis. ' +
-                    'Bitte zuerst "Maske im Editor öffnen".');
-                return;
-            }
-            if (maskIsEmpty()) { alert('Die Maske im Editor ist leer.'); return; }
-            spec.inpaint.overlay = maskCanvas.toDataURL('image/png');
-            spec.inpaint.feather = feather();
-            slider.value = String(spec.inpaint.feather);
-            out.textContent = slider.value;
-            reblend();
-        });
+        addAction(tools, 'Maske bearbeiten', function () { openTuneEditor(cardTarget()); });
 
         ui.card.appendChild(row);
         ui.card.appendChild(tools);
+    }
+
+    /* ------------------------------------------------------------------ */
+    /* Maske bearbeiten (Fenster)                                          */
+    /* ------------------------------------------------------------------ */
+
+    // Die Maske eines fertigen Inpaints direkt auf dem Ergebnis nachmalen.
+    // Während gemalt oder radiert wird, ist die Maske sichtbar; beim Loslassen
+    // wird sofort neu zusammengesetzt – aus dem gespeicherten Rohergebnis des
+    // Modells, ohne neue Anfrage. Die Vorschau rechnet in Bildschirmgrösse,
+    // „Fertig“ und „Herunterladen“ in voller Auflösung.
+    //
+    // Ein Ziel (target) beschreibt, woher die Daten kommen und wohin das
+    // Ergebnis geht: { raw, current, inpaint: {base, overlay, w, h, feather},
+    // apply(url, overlay, feather) }.
+
+    var tuneModal = $('#tuneModal');
+    var tuneStage = $('#tuneStage');
+    var tuneView = $('#tuneView');                     // zusammengesetzte Vorschau
+    var tuneMaskView = $('#tuneMask');                 // Maske, nur beim Malen sichtbar
+    var tuneMask = document.createElement('canvas');   // harte Maske, volle Auflösung
+    var tuneBrushSize = $('#tuneBrushSize');
+    var tuneFeather = $('#tuneFeather');
+    tuneFeather.max = String(FEATHER_MAX);
+    var tuneBrushMode = 'brush';
+    var tuneSession = null;   // { target, res, base, w, h, version, cache, busy }
+
+    function tuneFeatherValue() { return parseInt(tuneFeather.value, 10) || 0; }
+
+    var tunePainter = createMaskPainter({
+        view: tuneMaskView,
+        mask: function () { return tuneMask; },
+        brush: function () { return parseInt(tuneBrushSize.value, 10); },
+        mode: function () { return tuneBrushMode; },
+        canPaint: function () { return !!tuneSession && !tuneSession.busy; },
+        onStart: function () {
+            renderTuneMask();
+            tuneStage.classList.add('is-painting');
+        },
+        onMove: scheduleTuneMask,
+        onEnd: function () {
+            tuneStage.classList.remove('is-painting');
+            tuneChanged();
+        }
+    });
+
+    var tuneMaskPending = false;
+    function scheduleTuneMask() {
+        if (tuneMaskPending) return;
+        tuneMaskPending = true;
+        requestAnimationFrame(function () { tuneMaskPending = false; renderTuneMask(); });
+    }
+
+    function renderTuneMask() {
+        if (!tuneSession) return;
+        var ctx = tuneMaskView.getContext('2d');
+        ctx.clearRect(0, 0, tuneMaskView.width, tuneMaskView.height);
+        var soft = featheredMask(tuneMask, tuneMaskView.width, tuneMaskView.height, tuneFeatherValue(), 512, 4);
+        ctx.drawImage(soft, 0, 0);
+        releaseCanvas(soft);
+    }
+
+    function renderTuneView() {
+        if (!tuneSession) return;
+        var t = tuneSession;
+        var c = composeInpaint(t.res, t.base, tuneMask, tuneView.width, tuneView.height, tuneFeatherValue(), 512, 4);
+        var ctx = tuneView.getContext('2d');
+        ctx.clearRect(0, 0, tuneView.width, tuneView.height);
+        ctx.drawImage(c, 0, 0);
+        releaseCanvas(c);
+    }
+
+    function tuneChanged() {
+        if (!tuneSession) return;
+        tuneSession.version++;
+        renderTuneView();
+    }
+
+    var tuneViewPending = false;
+    tuneFeather.addEventListener('input', function () {
+        $('#tuneFeatherOut').textContent = tuneFeather.value;
+        if (!tuneSession) return;
+        tuneSession.version++;
+        if (tuneViewPending) return;
+        tuneViewPending = true;
+        requestAnimationFrame(function () { tuneViewPending = false; renderTuneView(); });
+    });
+
+    tuneBrushSize.addEventListener('input', function () {
+        $('#tuneBrushSizeOut').textContent = tuneBrushSize.value;
+    });
+
+    function setTuneBrushMode(m) {
+        tuneBrushMode = m;
+        $('#tuneBrushBtn').classList.toggle('is-active', m === 'brush');
+        $('#tuneEraseBtn').classList.toggle('is-active', m === 'erase');
+    }
+
+    $('#tuneBrushBtn').addEventListener('click', function () { setTuneBrushMode('brush'); });
+    $('#tuneEraseBtn').addEventListener('click', function () { setTuneBrushMode('erase'); });
+
+    $('#tuneUndoBtn').addEventListener('click', function () {
+        if (!tuneSession || tuneSession.busy) return;
+        if (tunePainter.undo()) tuneChanged();
+    });
+
+    $('#tuneClearBtn').addEventListener('click', function () {
+        if (!tuneSession || tuneSession.busy) return;
+        tunePainter.clear();
+        tuneChanged();
+    });
+
+    // Das ganze Bild soll auf den Bildschirm passen, Werkzeuge darunter.
+    function fitTuneStage() {
+        if (!tuneSession) return;
+        var t = tuneSession;
+        var panel = tuneStage.parentNode;
+        var cs = getComputedStyle(panel);
+        var avail = panel.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight);
+        var maxH = Math.max(200, window.innerHeight * 0.6);
+        var s = Math.min(avail / t.w, maxH / t.h);
+        tuneStage.style.width = Math.max(1, Math.floor(t.w * s)) + 'px';
+        tuneStage.style.height = Math.max(1, Math.floor(t.h * s)) + 'px';
+    }
+
+    var tuneOpening = false;
+
+    function openTuneEditor(target) {
+        if (tuneSession || tuneOpening) return Promise.resolve();
+        tuneOpening = true;
+        return Promise.all([
+            needImage(target.raw, 'Das Rohergebnis'),
+            needImage(target.inpaint.base, 'Das Basisbild'),
+            needImage(target.inpaint.overlay, 'Die Maske')
+        ]).then(function (imgs) {
+            var w = target.inpaint.w, h = target.inpaint.h;
+            tuneSession = { target: target, res: imgs[0], base: imgs[1], w: w, h: h, version: 0, cache: null, busy: false };
+
+            tuneMask.width = w;
+            tuneMask.height = h;
+            var mctx = tuneMask.getContext('2d', { willReadFrequently: true });
+            mctx.clearRect(0, 0, w, h);
+            mctx.drawImage(imgs[2], 0, 0, w, h);
+            tunePainter.resetUndo();
+
+            var p = Math.min(1, PREVIEW_EDGE / Math.max(w, h));
+            tuneView.width = tuneMaskView.width = Math.max(1, Math.round(w * p));
+            tuneView.height = tuneMaskView.height = Math.max(1, Math.round(h * p));
+
+            tuneFeather.value = String(Math.min(target.inpaint.feather || 0, FEATHER_MAX));
+            $('#tuneFeatherOut').textContent = tuneFeather.value;
+            tuneBrushSize.value = brushSize.value;
+            $('#tuneBrushSizeOut').textContent = tuneBrushSize.value;
+            setTuneBrushMode('brush');
+
+            tuneModal.hidden = false;
+            tuneModal.scrollTop = 0;
+            document.body.classList.add('is-modal');
+            fitTuneStage();
+            window.addEventListener('resize', fitTuneStage);
+            renderTuneView();
+            renderTuneMask();
+        }).catch(function (e) {
+            closeTuneEditor();
+            alert('Maske konnte nicht geladen werden: ' + e.message);
+        }).then(function () { tuneOpening = false; });
+    }
+
+    function closeTuneEditor() {
+        tuneSession = null;
+        tuneModal.hidden = true;
+        tuneModal.classList.remove('is-busy');
+        $('#tuneDone').disabled = false;
+        $('#tuneDownload').disabled = false;
+        tuneStage.classList.remove('is-painting');
+        document.body.classList.remove('is-modal');
+        window.removeEventListener('resize', fitTuneStage);
+        tunePainter.resetUndo();
+        releaseCanvas(tuneMask);
+        releaseCanvas(tuneView);
+        releaseCanvas(tuneMaskView);
+    }
+
+    function setTuneBusy(on) {
+        if (!tuneSession) return;
+        tuneSession.busy = on;
+        tuneModal.classList.toggle('is-busy', on);
+        $('#tuneDone').disabled = on;
+        $('#tuneDownload').disabled = on;
+    }
+
+    // Das Ergebnis in voller Auflösung – für „Fertig“ und „Herunterladen“,
+    // einmal gerechnet, solange sich nichts ändert.
+    function tuneResult() {
+        var t = tuneSession;
+        if (t.cache && t.cache.version === t.version) return t.cache.url;
+        var url = canvasToPng(composeInpaint(t.res, t.base, tuneMask, t.w, t.h, tuneFeatherValue()));
+        t.cache = { version: t.version, url: url };
+        return url;
+    }
+
+    // Erst den Beschäftigt-Zustand zeichnen lassen, dann rechnen.
+    function afterPaint(fn) {
+        return new Promise(function (resolve) {
+            requestAnimationFrame(function () { setTimeout(resolve, 0); });
+        }).then(fn);
+    }
+
+    function finishTuneEditor() {
+        if (!tuneSession || tuneSession.busy) return;
+        if (tuneSession.version === 0) { closeTuneEditor(); return; }
+        setTuneBusy(true);
+        afterPaint(function () {
+            var url = tuneResult();
+            tuneSession.target.apply(url, tuneMask.toDataURL('image/png'), tuneFeatherValue());
+        }).then(closeTuneEditor, function (e) {
+            setTuneBusy(false);
+            alert('Die Änderung konnte nicht übernommen werden: ' + e.message);
+        });
+    }
+
+    function downloadTuneResult() {
+        if (!tuneSession || tuneSession.busy) return;
+        var name = 'fhnw-imageeditor-' + Date.now() + '.png';
+        if (tuneSession.version === 0) { download(tuneSession.target.current, name); return; }
+        setTuneBusy(true);
+        afterPaint(tuneResult).then(function (url) {
+            download(url, name);
+        }, function (e) {
+            alert('Bild konnte nicht erstellt werden: ' + e.message);
+        }).then(function () { setTuneBusy(false); });
+    }
+
+    $('#tuneDone').addEventListener('click', finishTuneEditor);
+    $('#tuneDownload').addEventListener('click', downloadTuneResult);
+
+    // Ergebniskarten, die noch auf der Seite stehen – damit „Maske bearbeiten“
+    // aus dem Verlauf dieselbe Karte mitzieht statt sie zu überholen.
+    var tuneCards = {};
+
+    function registerTuneCard(id, img, makeTarget) {
+        Object.keys(tuneCards).forEach(function (k) {
+            if (!tuneCards[k].img.isConnected) delete tuneCards[k];
+        });
+        tuneCards[id] = { img: img, make: makeTarget };
+    }
+
+    function liveTuneTarget(id) {
+        var entry = tuneCards[id];
+        if (!entry) return null;
+        if (!entry.img.isConnected) { delete tuneCards[id]; return null; }
+        return entry.make();
+    }
+
+    function historyTuneTarget(id, dataUrl, data) {
+        var inpaint = {
+            base: data.base,
+            overlay: data.overlay,
+            w: data.w,
+            h: data.h,
+            feather: Math.min(data.feather || 0, FEATHER_MAX)
+        };
+        return {
+            raw: data.raw,
+            current: dataUrl,
+            inpaint: inpaint,
+            apply: function (url, overlay, featherValue) {
+                inpaint.overlay = overlay;
+                inpaint.feather = featherValue;
+                updateHistoryRecord(id, url, inpaint);
+            }
+        };
     }
 
     // Zustand der Oberfläche einfrieren, damit parallele Jobs sich nicht stören.
@@ -1527,6 +1856,10 @@
     $('#genBtn').addEventListener('click', generate);
 
     document.addEventListener('keydown', function (e) {
+        if (tuneSession) {
+            if (e.key === 'Escape') { e.preventDefault(); finishTuneEditor(); }
+            return;
+        }
         if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') { e.preventDefault(); generate(); }
         if (e.key === 'Escape') closeLightbox();
     });
@@ -1823,15 +2156,17 @@
                 acts.appendChild(reuse);
 
                 if (item.hasTune) {
-                    var tune = el('button', null, 'Maske anpassen');
-                    tune.type = 'button';
-                    tune.addEventListener('click', function () {
+                    var edit = el('button', null, 'Maske bearbeiten');
+                    edit.type = 'button';
+                    edit.addEventListener('click', function () {
+                        var live = liveTuneTarget(item.id);
+                        if (live) { openTuneEditor(live); return; }
                         Promise.all([loadImageData(item.id), loadTune(item.id)]).then(function (got) {
                             if (!got[0] || !got[1]) { alert('Die Daten fürs Nachjustieren sind nicht mehr vorhanden.'); return; }
-                            reopenTune(item, got[0], got[1]);
+                            return openTuneEditor(historyTuneTarget(item.id, got[0], got[1]));
                         }).catch(function (e) { alert('Konnte nicht geladen werden: ' + e.message); });
                     });
-                    acts.appendChild(tune);
+                    acts.appendChild(edit);
                 }
 
                 var inp = el('button', null, 'Inpaint');
@@ -1880,38 +2215,6 @@
                 }).then(function () { delete healing[entry.item.id]; });
             });
         }, Promise.resolve());
-    }
-
-    // Einen Inpaint-Eintrag zum Nachbearbeiten zurückholen: Basisbild und Maske
-    // landen wieder im Editor, das Ergebnis bekommt eine Karte mit Kanten-Regler
-    // und "Aus Editor übernehmen".
-    function reopenTune(item, dataUrl, tune) {
-        var spec = {
-            mode: 'inpaint',
-            prompt: item.prompt,
-            formatLabel: item.format || (tune.w + ' × ' + tune.h + ' px'),
-            quality: item.quality,
-            composite: true,
-            inpaint: {
-                base: tune.base,
-                overlay: tune.overlay,
-                w: tune.w,
-                h: tune.h,
-                feather: tune.feather || 0
-            }
-        };
-        var ui = createJobCard(spec);
-        ui.statusText = 'Aus Verlauf';
-        showResult(ui, spec, { dataUrl: dataUrl, raw: tune.raw }, item.id);
-
-        setMode('inpaint', false);
-        loadBase(tune.base)
-            .then(function () { return restoreMask(tune.overlay, tune.feather || 0); })
-            .then(function () {
-                $('#historyCard').open = false;
-                inpaintStage.scrollIntoView({ behavior: 'smooth', block: 'center' });
-            })
-            .catch(function (e) { alert('Editor-Zustand konnte nicht wiederhergestellt werden: ' + e.message); });
     }
 
     $('#historyClear').addEventListener('click', function () {

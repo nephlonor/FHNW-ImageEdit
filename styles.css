@@ -775,6 +775,62 @@ input[type="range"] {
     border-radius: 6px;
 }
 
+/* ---------- Maske bearbeiten ---------- */
+
+body.is-modal { overflow: hidden; }
+
+.tune-modal {
+    position: fixed;
+    inset: 0;
+    z-index: 90;
+    background: rgba(0,0,0,.86);
+    display: flex;
+    justify-content: center;
+    align-items: flex-start;
+    padding: 16px;
+    overflow-y: auto;
+}
+
+.tune-modal[hidden] { display: none; }
+
+.tune-panel {
+    width: 100%;
+    max-width: 980px;
+    margin: auto 0;
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    padding: 14px;
+}
+
+/* Grösse setzt das Skript, damit das ganze Bild auf den Bildschirm passt. */
+.tune-stage { margin: 0 auto; }
+
+#tuneView { display: block; width: 100%; height: 100%; }
+
+/* Die Maske erscheint nur, solange gemalt oder radiert wird. */
+#tuneMask {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    opacity: 0;
+    transition: opacity .12s;
+    cursor: crosshair;
+}
+
+.tune-stage.is-painting #tuneMask { opacity: .55; }
+
+.tune-actions {
+    display: flex;
+    gap: 8px;
+    margin-top: 16px;
+}
+
+.tune-actions .btn { flex: 1 1 0; }
+
+.tune-modal.is-busy .tune-panel { opacity: .7; cursor: progress; }
+
 /* ---------- Footer ---------- */
 
 .site-footer {
