@@ -930,19 +930,24 @@
             o.textContent = r.label || r.value;
             ratioSelect.appendChild(o);
         });
-        if (!list.some(function (r) { return r.value === currentRatio; })) {
-            // Gewähltes Format gibt es beim anderen Modell nicht – nächstliegendes nehmen.
-            var cur = ratioEntry(currentRatio), best = 'auto', bestDist = Infinity;
-            if (cur.w) {
-                list.forEach(function (r) {
-                    if (!r.w) return;
-                    var dist = Math.abs(Math.log((r.w / r.h) / (cur.w / cur.h)));
-                    if (dist < bestDist) { bestDist = dist; best = r.value; }
-                });
-            }
-            currentRatio = best;
-        }
+        currentRatio = nearestRatio(currentRatio, currentModel);
         ratioSelect.value = currentRatio;
+    }
+
+    // Das Format beim anderen Modell: dasselbe, wenn es dort existiert, sonst
+    // das nächstliegende Seitenverhältnis.
+    function nearestRatio(value, model) {
+        var list = ratiosFor(model);
+        if (list.some(function (r) { return r.value === value; })) return value;
+        var cur = ratioEntry(value), best = 'auto', bestDist = Infinity;
+        if (cur.w) {
+            list.forEach(function (r) {
+                if (!r.w) return;
+                var dist = Math.abs(Math.log((r.w / r.h) / (cur.w / cur.h)));
+                if (dist < bestDist) { bestDist = dist; best = r.value; }
+            });
+        }
+        return best;
     }
 
     function ratioEntry(value) {
@@ -1183,7 +1188,8 @@
             if (!body && txt) msg += ' – ' + txt.slice(0, 200);
             var err = new Error(msg);
             err.status = res.status;
-            err.contentPolicy = isContentPolicy(body);
+            err.contentPolicy = isContentPolicy(body) ||
+                /safety system|content checker|content policy|moderation/i.test(msg);
             return err;
         });
     }
@@ -1762,6 +1768,30 @@
         return spec;
     }
 
+    // Derselbe Auftrag mit Nano Banana – für „Mit Nano Banana 2.1 versuchen“,
+    // wenn die Inhaltsprüfung bei GPT Image abgelehnt hat. Prompt, Bilder,
+    // Maske und Grösse bleiben; nur was Nano Banana anders kennt, wird übersetzt.
+    function asNano(spec) {
+        var n = {};
+        Object.keys(spec).forEach(function (k) { n[k] = spec[k]; });
+        n.model = 'nano';
+        n.quality = null;
+        n.transparent = false;
+        delete n.imageSize;
+        if (spec.mode === 'inpaint') {
+            n.endpoint = NANO_QUEUE_URL;
+            n.inpaint = {};
+            Object.keys(spec.inpaint).forEach(function (k) { n.inpaint[k] = spec.inpaint[k]; });
+            return n;
+        }
+        // GPT macht aus AUTO ohne Eingabebild 3:2 – dasselbe Format behalten.
+        var ratio = spec.mode === 'text' && spec.ratio === 'auto' ? TEXT_FALLBACK_RATIO : spec.ratio;
+        n.ratio = nearestRatio(ratio, 'nano');
+        n.endpoint = spec.mode === 'text' ? NANO_TEXT_QUEUE_URL : NANO_QUEUE_URL;
+        n.formatLabel = (ratioEntry(n.ratio).label || n.ratio) + ' · ' + n.tier;
+        return n;
+    }
+
     function runJob(spec, key) {
         var ui = createJobCard(spec);
         var state = { cancelled: false };
@@ -1878,10 +1908,17 @@
             console.error(err);
             ui.fail(err.message || String(err));
             if (cancelBtn.parentNode) cancelBtn.remove();
+            var offerNano = spec.model !== 'nano' && err.contentPolicy;
+            if (offerNano) {
+                addAction(ui.actions, 'Mit ' + NANO_LABEL + ' versuchen', function () {
+                    ui.card.remove();
+                    runJob(asNano(spec), getKey());
+                }, true);
+            }
             addAction(ui.actions, 'Erneut versuchen', function () {
                 ui.card.remove();
                 runJob(spec, getKey());
-            }, true);
+            }, !offerNano);
         });
     }
 

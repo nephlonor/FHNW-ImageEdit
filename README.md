@@ -102,6 +102,13 @@ der Moderation des Modells“. Grundlage ist fals Fehlerantwort
 `model_moderated` darin heisst, dass die Moderation des Modells selbst (OpenAI
 bzw. Google) abgelehnt hat – sonst war es fals eigener Filter.
 
+Lehnt die Inhaltsprüfung einen GPT-Auftrag ab, bietet die Karte **Mit Nano Banana
+2.1 versuchen** an: derselbe Auftrag – Prompt, Bilder, Maske, Grösse – geht mit
+Nano Banana (`safety_tolerance` 6) neu raus und ersetzt die Fehlerkarte. Ein
+Format, das Nano Banana nicht kennt (z. B. 2:1), wird zum nächstliegenden
+(16:9); AUTO ohne Eingabebild bleibt wie bei GPT 3:2. Der Modell-Schalter oben
+bleibt, wie er ist.
+
 ## Format
 
 * **Festes Seitenverhältnis** – von 1:3 bis 3:1 (1:3, 9:21, 1:2, 9:16, 2:3, 3:4,
