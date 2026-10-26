@@ -56,11 +56,13 @@
 
     var TIER_PX = { '2K': 2048, '4K': 4096 };
 
-    // Ohne Eingabebild generiert Text-to-Image, das engere Grenzen hat als Edit:
-    // Kanten in 16er-Schritten, max. 3840 px, 0,65–8,3 Megapixel.
-    var TEXT_MAX_EDGE = 3840;
-    var TEXT_MAX_PX = 8294400;
-    var TEXT_MIN_PX = 655360;
+    // Grössen, die GPT Image annimmt: Kanten in 16er-Schritten, max. 3840 px,
+    // 0,65–8,3 Megapixel, höchstens 3:1. Dokumentiert ist das nur bei
+    // Text-to-Image, gilt aber auch für Edit (gleiches Modell): ein grösserer
+    // Wunsch wie 4096 × 4096 wird dort still ignoriert und liefert nur ~3 MP.
+    var GPT_MAX_EDGE = 3840;
+    var GPT_MAX_PX = 8294400;
+    var GPT_MIN_PX = 655360;
     var TEXT_FALLBACK_RATIO = '3:2';
 
     // only: 'gpt' / 'nano' – Seitenverhältnisse, die nur ein Modell kennt.
@@ -1005,7 +1007,7 @@
     function dimsFor(value, tier, textToImage) {
         var r = ratioEntry(value);
         if (!r.w) {
-            if (!textToImage) return null;
+            if (!textToImage) return null;         // Edit: AUTO folgt dem Eingabebild
             r = ratioEntry(TEXT_FALLBACK_RATIO);   // AUTO hat ohne Eingabebild nichts abzuleiten
         }
         var long = TIER_PX[tier] || TIER_PX['2K'];
@@ -1013,14 +1015,9 @@
         if (r.w >= r.h) { w = long; h = long * r.h / r.w; }
         else { h = long; w = long * r.w / r.h; }
 
-        if (!textToImage) {
-            var snap8 = function (v) { return Math.max(64, Math.min(14142, Math.round(v / 8) * 8)); };
-            return { width: snap8(w), height: snap8(h) };
-        }
-
-        var s = Math.min(1, TEXT_MAX_EDGE / Math.max(w, h), Math.sqrt(TEXT_MAX_PX / (w * h)));
+        var s = Math.min(1, GPT_MAX_EDGE / Math.max(w, h), Math.sqrt(GPT_MAX_PX / (w * h)));
         w *= s; h *= s;
-        var up = Math.sqrt(TEXT_MIN_PX / (w * h));
+        var up = Math.sqrt(GPT_MIN_PX / (w * h));
         if (up > 1) { w *= up; h *= up; }
         var snap16 = function (v) { return Math.max(256, Math.round(v / 16) * 16); };
         w = snap16(w); h = snap16(h);
@@ -1028,7 +1025,7 @@
         // die längere Kante nachziehen, bis alles wieder passt.
         var guard = 0;
         while (guard++ < 300 && Math.min(w, h) > 256 &&
-               (Math.max(w, h) > TEXT_MAX_EDGE || w * h > TEXT_MAX_PX || Math.max(w / h, h / w) > 3)) {
+               (Math.max(w, h) > GPT_MAX_EDGE || w * h > GPT_MAX_PX || Math.max(w / h, h / w) > 3)) {
             if (w >= h) w -= 16; else h -= 16;
         }
         return { width: w, height: h };
