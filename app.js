@@ -33,6 +33,12 @@
     var NANO_QUEUE_URL = 'https://queue.fal.run/' + NANO_MODEL_ID;
     var NANO_TEXT_QUEUE_URL = 'https://queue.fal.run/' + NANO_TEXT_MODEL_ID;
     var NANO_SAFETY = '6';
+
+    // GPT Image: fal lässt die Prüfung nur für freigeschaltete Konten lockern
+    // („Authorized callers may set false to request relaxed screening“). Wir
+    // bitten immer darum; lehnt fal den Parameter für ein Konto ab, geht die
+    // Anfrage einmal ohne ihn neu raus, und er bleibt für diese Sitzung weg.
+    var gptRelaxedScreening = true;
     var NANO_LABEL = 'Nano Banana 2.1';
     var MODEL_STORAGE = 'fhnw.imageeditor.model';
 
@@ -1154,7 +1160,9 @@
             try { body = JSON.parse(txt); } catch (e) { /* kein JSON */ }
             var msg = errorText(res, body);
             if (!body && txt) msg += ' – ' + txt.slice(0, 200);
-            return new Error(msg);
+            var err = new Error(msg);
+            err.status = res.status;
+            return err;
         });
     }
 
@@ -1166,6 +1174,24 @@
         }).then(function (res) {
             if (!res.ok) return readError(res).then(function (e) { throw e; });
             return res.json();
+        });
+    }
+
+    // Weist fal eine GPT-Anfrage schon beim Absenden zurück, während sie um die
+    // lockerere Prüfung bittet, einmal ohne diesen Wunsch neu senden. Fehler
+    // beim Generieren selbst (z. B. eine Ablehnung durch die Inhaltsprüfung)
+    // kommen erst später und lösen keinen zweiten Versuch aus.
+    function submitWithFallback(payload, key, endpoint) {
+        return falSubmit(payload, key, endpoint).catch(function (err) {
+            var rejected = err && (err.status === 400 || err.status === 403 || err.status === 422);
+            if (!rejected || payload.enable_safety_checker !== false) throw err;
+            console.warn('fal hat enable_safety_checker=false abgelehnt (' + err.message + ') – Anfrage geht ohne den Parameter neu raus.');
+            var retry = {};
+            Object.keys(payload).forEach(function (k) { if (k !== 'enable_safety_checker') retry[k] = payload[k]; });
+            return falSubmit(retry, key, endpoint).then(function (h) {
+                gptRelaxedScreening = false;
+                return h;
+            });
         });
     }
 
@@ -1746,12 +1772,13 @@
                 output_format: REQ_FORMAT
             };
             if (spec.transparent) payload.background = 'transparent';
+            if (gptRelaxedScreening) payload.enable_safety_checker = false;
         }
         if (spec.mode !== 'text') payload.image_urls = spec.images;
 
         var handle = null;
 
-        falSubmit(payload, key, spec.endpoint).then(function (h) {
+        submitWithFallback(payload, key, spec.endpoint).then(function (h) {
             handle = h;
             if (state.cancelled) { falCancel(h.cancel_url, key); throw new Error('__cancelled__'); }
             ui.setStatus('In der Warteschlange …');
