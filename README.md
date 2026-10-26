@@ -92,8 +92,15 @@ Inhaltsprüfung damit nur für freigeschaltete Konten („Authorized callers may
 false to request relaxed screening“); bei allen anderen wird normal geprüft. Lehnt
 fal den Parameter für ein Konto beim Absenden ab, geht die Anfrage einmal ohne
 ihn neu raus, und er bleibt für den Rest der Sitzung weg – die App funktioniert
-also so oder so. Eine Ablehnung durch die Inhaltsprüfung selbst kommt erst beim
-Ergebnis und löst keinen zweiten Versuch aus.
+also so oder so. Eine Ablehnung durch die Inhaltsprüfung selbst löst keinen
+zweiten Versuch aus.
+
+Lehnt die Inhaltsprüfung ab, steht auf der Karte, was beanstandet wurde und wer
+geprüft hat, z. B. „Vom Inhaltsfilter abgelehnt (Prompt) – sexual · geprüft von
+der Moderation des Modells“. Grundlage ist fals Fehlerantwort
+`content_policy_violation`: `categories` nennt die Kategorien, und
+`model_moderated` darin heisst, dass die Moderation des Modells selbst (OpenAI
+bzw. Google) abgelehnt hat – sonst war es fals eigener Filter.
 
 ## Format
 
