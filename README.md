@@ -87,6 +87,14 @@ streng), kein Qualitätsregler, kein transparenter Hintergrund. Die Formatliste
 passt sich an (z. B. 1:8, 1:4, 4:1, 8:1 statt 1:3, 9:21, 1:2, 2:1, 3:1). Inpaint
 funktioniert mit beiden Modellen gleich.
 
+GPT-Image-Anfragen schicken `enable_safety_checker: false` mit. fal lockert die
+Inhaltsprüfung damit nur für freigeschaltete Konten („Authorized callers may set
+false to request relaxed screening“); bei allen anderen wird normal geprüft. Lehnt
+fal den Parameter für ein Konto beim Absenden ab, geht die Anfrage einmal ohne
+ihn neu raus, und er bleibt für den Rest der Sitzung weg – die App funktioniert
+also so oder so. Eine Ablehnung durch die Inhaltsprüfung selbst kommt erst beim
+Ergebnis und löst keinen zweiten Versuch aus.
+
 ## Format
 
 * **Festes Seitenverhältnis** – von 1:3 bis 3:1 (1:3, 9:21, 1:2, 9:16, 2:3, 3:4,
