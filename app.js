@@ -240,13 +240,60 @@
             d.toLocaleTimeString('de-CH', { hour: '2-digit', minute: '2-digit' });
     }
 
-    function download(dataUrl, name) {
+    // Bild sichern. Auf Touch-Geräten über das Teilen-Menü („Bild sichern“):
+    // ein 4K-Ergebnis als Data-URL lässt sich auf dem iPhone weder
+    // herunterladen noch per Gedrückthalten sichern. Sonst als Datei über eine
+    // Blob-URL. Alles synchron, damit der Klick als Nutzeraktion gilt.
+    function download(src, name) {
+        var blob = dataUrlToBlob(src);
+        if (!blob) { clickDownload(src, name); return; }
+        var file = new File([blob], withExt(name, blob.type), { type: blob.type });
+        if (prefersShare() && navigator.canShare && navigator.canShare({ files: [file] })) {
+            navigator.share({ files: [file] }).catch(function (e) {
+                if (e && e.name === 'AbortError') return;   // im Menü abgebrochen
+                saveBlob(blob, file.name);
+            });
+            return;
+        }
+        saveBlob(blob, file.name);
+    }
+
+    function prefersShare() {
+        return !!(window.matchMedia && window.matchMedia('(pointer: coarse)').matches);
+    }
+
+    function saveBlob(blob, name) {
+        var url = URL.createObjectURL(blob);
+        clickDownload(url, name);
+        setTimeout(function () { URL.revokeObjectURL(url); }, 60000);
+    }
+
+    function clickDownload(href, name) {
         var a = document.createElement('a');
-        a.href = dataUrl;
+        a.href = href;
         a.download = name;
         document.body.appendChild(a);
         a.click();
         a.remove();
+    }
+
+    function withExt(name, mime) {
+        var ext = { 'image/png': '.png', 'image/jpeg': '.jpg', 'image/webp': '.webp' }[mime];
+        return ext ? name.replace(/\.[a-z]+$/i, '') + ext : name;
+    }
+
+    // Data-URL → Blob, synchron (fetch wäre asynchron und kostet die Nutzeraktion).
+    function dataUrlToBlob(src) {
+        var m = /^data:([^;,]*)(;base64)?,/.exec(src || '');
+        if (!m || !m[2]) return null;
+        try {
+            var bin = atob(src.slice(m[0].length));
+            var bytes = new Uint8Array(bin.length);
+            for (var i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+            return new Blob([bytes], { type: m[1] || 'application/octet-stream' });
+        } catch (e) {
+            return null;
+        }
     }
 
     /* ------------------------------------------------------------------ */
@@ -2428,15 +2475,28 @@
     var lightbox = $('#lightbox');
     var lightboxImg = $('#lightboxImg');
 
+    var lightboxSrc = null, lightboxUrl = null;
+
     function openLightbox(src) {
-        lightboxImg.src = src;
+        lightboxSrc = src;
+        // Grosse Bilder über eine Blob-URL zeigen statt über eine riesige
+        // Data-URL – so hat Gedrückthalten auf dem Handy eine echte Datei.
+        var blob = src.length > 2000000 ? dataUrlToBlob(src) : null;
+        lightboxUrl = blob ? URL.createObjectURL(blob) : null;
+        lightboxImg.src = lightboxUrl || src;
         lightbox.hidden = false;
     }
     function closeLightbox() {
         lightbox.hidden = true;
         lightboxImg.removeAttribute('src');
+        if (lightboxUrl) URL.revokeObjectURL(lightboxUrl);
+        lightboxSrc = lightboxUrl = null;
     }
     lightbox.addEventListener('click', closeLightbox);
+    $('#lightboxSave').addEventListener('click', function (e) {
+        e.stopPropagation();
+        if (lightboxSrc) download(lightboxSrc, 'fhnw-imageeditor-' + Date.now() + '.png');
+    });
 
     /* ------------------------------------------------------------------ */
     /* Start                                                               */
